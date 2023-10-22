@@ -2,9 +2,7 @@ from pathlib import Path
 import sys
 import time
 sys.path.append('D:\\Project')
-from pybacktest.src.bookcore import BookCore, PD_DF_DTYPES
-# from multiprocessing.pool import Pool
-from dataset_factory import DataSetFactory, DataSetFactory2
+from dataset_factory import DataSetFactory
 import pandas as pd
 import numpy as np
 import os
@@ -57,14 +55,13 @@ def gen(task):
         
         chunk.to_parquet(os.path.join(out_path, filename), engine='pyarrow', compression='gzip', index=False)
 
-def gen2(task: Tuple[str, List[str]]):
+def gen2(task: Tuple[str, List[str]], chunk_size: int = 100_000):
     out_path, files = task
     dsId = os.path.basename(out_path.rstrip('\\'))
     instId = dsId.removesuffix('-400')
     meet_snapshot = False
     
-    MAX_CHUNK_SIZE = 100_000
-    dataset_fact = DataSetFactory2(instId, Path(out_path), MAX_CHUNK_SIZE)
+    dataset_fact = DataSetFactory(instId, Path(out_path), chunk_size)
     
     total_files = len(files)
 
