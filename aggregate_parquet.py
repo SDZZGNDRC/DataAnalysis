@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 import time
+
+from futures_alias import is_this_week
 sys.path.append('D:\\Project')
 from dataset_factory import DataSetFactory
 import pandas as pd
@@ -61,7 +63,7 @@ def gen2(task: Tuple[str, List[str]], chunk_size: int = 100_000):
     instId = dsId.removesuffix('-400')
     meet_snapshot = False
     
-    dataset_fact = DataSetFactory(instId, Path(out_path), chunk_size)
+    dataset_fact = DataSetFactory(instId, Path(out_path), chunk_size, False)
     
     total_files = len(files)
 
@@ -93,10 +95,29 @@ def gen2(task: Tuple[str, List[str]], chunk_size: int = 100_000):
         exit(-1)
 
 
-if __name__ == '__main__':
-    files = glob.glob(r'E:\temp\parquet\OKX-Books-*.parquet')
+def get_spot():
+    files = glob.glob(r'E:\temp\parquet\BTC-USDT-400\OKX-Books-BTC-USDT-400-*.parquet')
+    files = sorted(files)
+    assert files
+    gen2((r'E:\out3\books\BTC-USDT-400', files), chunk_size=500_000)
+    
 
-    gen2((r'E:\out3\books\BTC-USDT-400', files))
+def get_futures_weekly():
+    files = glob.glob('E:\\temp\\parquet\\BTC-USDT-FUTURES\\OKX-Books-BTC-USDT-*-400-*.parquet')
+    files = sorted(files)
+    assert files
+    new_files = []
+    for file in files:
+        p = os.path.basename(file).split('-')
+        date_s = p[4]
+        start_ts = int(p[-2])/1000
+        if is_this_week(start_ts, date_s):
+            new_files.append(file)
+    assert new_files
+    gen2(('E:\\out3\\books\\BTC-USDT-TWEEK', new_files), chunk_size=500_000)
+
+if __name__ == '__main__':
+    get_futures_weekly()
 
     # grouped_files: Dict[str, List[str]] = {}
     # for file in files:

@@ -72,11 +72,11 @@ def json2parquet(files: Tuple[str, str]) -> None:
     df.to_parquet(parquet_file, compression='gzip', index=False)
 
 if __name__ == '__main__':
-    destPath = r'E:\temp\parquet'
+    destPath = f'E:\\temp\\parquet\\BTC-USDT-FUTURES'
     if os.path.exists(destPath):
         shutil.rmtree(destPath)
-    os.makedirs(destPath)
-    tempDir = r'E:\temp\json'
+    os.makedirs(destPath, exist_ok=True)
+    tempDir = f'E:\\temp\\json\\BTC-USDT-FUTURES'
 
     fileList: Dict[str, str] = {}
 
@@ -111,7 +111,7 @@ if __name__ == '__main__':
         parquet_file = os.path.join(destPath, json_fileBaseName.replace('.json', '.parquet'))
         tasks.append((books_file, parquet_file))
     
-    r = process_map(json2parquet, tasks, max_workers=6, chunksize=600)
-    # with Pool(6) as p:
-    #     p.map(json2parquet, tasks)
+    # r = process_map(json2parquet, tasks, max_workers=6, chunksize=600)
+    with Pool(6) as p:
+        p.map(json2parquet, tasks)
 

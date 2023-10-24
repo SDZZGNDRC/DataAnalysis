@@ -7,13 +7,13 @@ import pandas as pd
 from typing import List, Dict, Literal, Tuple
 
 class DataSetFactory:
-    def __init__(self, instId: str, path: Path, chunk_size: int = 100_000) -> None:
+    def __init__(self, instId: str, path: Path, chunk_size: int = 100_000, check_instId: bool = True) -> None:
         self.out_path = path
         # Make sure the path existed. 
         os.makedirs(path, exist_ok=True)
         assert chunk_size >= 2
         self.chunk_size = chunk_size
-        self._bc = BookCore(instId)
+        self._bc = BookCore(instId, check_instId)
         self.instId = instId
         self.counted_ts = 0
         self.cur_chunk = []

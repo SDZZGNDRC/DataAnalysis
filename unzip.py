@@ -29,16 +29,18 @@ def unzip_7z(args):
 
 
 if __name__ == "__main__":
-    destRoot = r'E:\temp\json'
-    zipfiles = glob.glob(r'E:\datapool\2023-0*-*\OKX-Books-BTC-USDT-400-*.7z')
-    destfiles = []
-    for zipfile in zipfiles:
-            filename = os.path.splitext(os.path.basename(zipfile))[0] + '.json'
+    destRoot = f'E:\\temp\\json\\BTC-USDT-FUTURES'
+    os.makedirs(destRoot, exist_ok=True)
+    zipfiles = glob.glob(f'E:\\datapool\\2023-08-*\\OKX-Books-BTC-USDT-2[3-4]*-400-*.7z')
+    assert zipfiles
+    destfiles = [destRoot]*len(zipfiles)
+    # for zipfile in zipfiles:
+            # filename = os.path.splitext(os.path.basename(zipfile))[0] + '.json'
             # destfiles.append(os.path.join(destRoot, filename))
-            destfiles.append(destRoot)
+            # destfiles.append(destRoot)
 
     print('Start to unzip...')
-    r = process_map(unzip_7z, zip(zipfiles, destfiles), max_workers=6)
+    # r = process_map(unzip_7z, zip(zipfiles, destfiles), max_workers=6)
 
-    # with Pool(6) as p:
-    #     p.map(unzip_7z, list())
+    with Pool(6) as p:
+        p.map(unzip_7z, zip(zipfiles, destfiles))
