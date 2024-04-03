@@ -1,9 +1,9 @@
 from multiprocessing import Pool
 import shutil
+import sys
 import pandas as pd
 from typing import List, Dict, Any, Tuple
 import os
-from tqdm.contrib.concurrent import process_map
 import json
 
 
@@ -11,13 +11,12 @@ import json
 def parse_dataFileName(fileBaseName: str) -> dict:
     # example: OKX-Books-1INCH-USD-SWAP-400-1689297329268-1689298999939.7z
     items = os.path.splitext(fileBaseName)[0].split('-')
-    if len(items) < 6:
+    if len(items) < 6 or (not fileBaseName.startswith('OKX-Books')):
         raise Exception('Invalid file name: ' + fileBaseName)
     
     exchange = items[0]
     dataSource = items[1]
-    startTimestamp = items[-2]
-    endTimestamp = items[-1]
+    startTimestamp, endTimestamp = items[-2], items[-1]
     dsID = '-'.join(items[2:-2])
     
     return {
@@ -30,7 +29,7 @@ def parse_dataFileName(fileBaseName: str) -> dict:
 
 def flatten_data(data: List[Dict[str, Any]]) -> pd.DataFrame:
     # Initialize an empty list to store the flattened data
-    flattened_data: List[List[Any]] = []    
+    flattened_data: List[List[Any]] = []
     
     # Loop through each data object
     for obj in data:
@@ -57,13 +56,16 @@ def flatten_data(data: List[Dict[str, Any]]) -> pd.DataFrame:
         for side, orders in [('ask', obj['data'][0]['asks']), ('bid', obj['data'][0]['bids'])]:
             # Loop through each order
             for order in orders:
-                price, size, _, numOrders = order # NOTICE: the third element is not deprecated according to the OKX API documentation
+                price, size, _, numOrders = order # NOTICE: the third element is deprecated according to the OKX API documentation
                 # Append the flattened order to the list
                 flattened_data.append([instId, price, size, int(numOrders), side, int(timestamp), prevSeqId, seqId, action, checksum])
     return pd.DataFrame(flattened_data, columns=[ 'instId', 'price', 'size', 'numOrders', 'side', 'timestamp', 'prevSeqId', 'seqId', 'action', 'checksum'])
 
-def json2parquet(files: Tuple[str, str]) -> None:
-    json_file, parquet_file = files
+def json2parquet(json_file: str, parquet_file: str) -> None:
+    '''
+    Convert a json file to a parquet file.
+    '''
+    # json_file, parquet_file = files
     with open(json_file) as f:
         raw_data = json.load(f)
         data = raw_data['data']
@@ -72,15 +74,22 @@ def json2parquet(files: Tuple[str, str]) -> None:
     df.to_parquet(parquet_file, compression='gzip', index=False)
 
 if __name__ == '__main__':
-    destPath = f'E:\\temp\\parquet\\BTC-USDT-FUTURES'
-    if os.path.exists(destPath):
-        shutil.rmtree(destPath)
+    if len(sys.argv[1:]) != 2:
+        print('Please input two argv')
+        exit(-1)
+    jsonDir, destPath = sys.argv[1], sys.argv[2]
+    if not (os.path.isdir(jsonDir) and os.path.isdir(destPath)):
+        print('Please input directories')
+        exit(-1)
+    if not os.path.exists(jsonDir):
+        print(f'jsonDir {jsonDir} not existed')
+        exit(-1)
+
     os.makedirs(destPath, exist_ok=True)
-    tempDir = f'E:\\temp\\json\\BTC-USDT-FUTURES'
 
     fileList: Dict[str, str] = {}
 
-    for root, dirs, files in os.walk(tempDir):
+    for root, dirs, files in os.walk(jsonDir):
         for file in files:
             if file.endswith('.json'):
                 fileList[file] = os.path.join(root, file)
