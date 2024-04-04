@@ -61,11 +61,11 @@ def flatten_data(data: List[Dict[str, Any]]) -> pd.DataFrame:
                 flattened_data.append([instId, price, size, int(numOrders), side, int(timestamp), prevSeqId, seqId, action, checksum])
     return pd.DataFrame(flattened_data, columns=[ 'instId', 'price', 'size', 'numOrders', 'side', 'timestamp', 'prevSeqId', 'seqId', 'action', 'checksum'])
 
-def json2parquet(json_file: str, parquet_file: str) -> None:
+def json2parquet(argvs: Tuple[str, str]) -> None:
     '''
     Convert a json file to a parquet file.
     '''
-    # json_file, parquet_file = files
+    json_file, parquet_file = argvs
     with open(json_file) as f:
         raw_data = json.load(f)
         data = raw_data['data']
