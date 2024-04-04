@@ -16,9 +16,13 @@ if __name__ == "__main__":
         print('Please input two argv')
         exit(-1)
     zipDir, destDir = sys.argv[1], sys.argv[2]
-    if not (os.path.isdir(zipDir) and os.path.isdir(destDir)):
-        print('Please input directories')
+    if not os.path.isdir(zipDir):
+        print(f'Please input directories {zipDir}')
         exit(-1)
+    if not os.path.isdir(destDir):
+        print(f'Please input directories {destDir}')
+        exit(-1)
+    
     if not os.path.exists(zipDir):
         print(f'zipDir {zipDir} not existed')
         exit(-1)
