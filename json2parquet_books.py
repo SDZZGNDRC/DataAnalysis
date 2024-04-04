@@ -91,9 +91,11 @@ if __name__ == '__main__':
 
     for root, dirs, files in os.walk(jsonDir):
         for file in files:
-            if file.endswith('.json'):
+            if file.startswith('OKX-Books-') and file.endswith('.json'):
                 fileList[file] = os.path.join(root, file)
-
+    if len(fileList) == 0:
+        print(f'Can not find json files startswith OKX-Books- under: {jsonDir}')
+        exit(-1)
     files_meta: Dict[str, List[str]] = {
         'exchange': [],
         'dataSource': [],
