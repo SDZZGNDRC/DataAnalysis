@@ -6,7 +6,6 @@ import sys
 from typing import List, Tuple
 
 from matplotlib import pyplot as plt
-sys.path.append('D:\\Project')
 from pybacktest.src.simTime import SimTime
 from pybacktest.src.books import Book
 

@@ -1,7 +1,5 @@
 import os
 from pathlib import Path
-import sys
-sys.path.append('D:\\Project')
 from pybacktest.src.bookcore import BookCore
 import pandas as pd
 from typing import List, Dict, Literal, Tuple

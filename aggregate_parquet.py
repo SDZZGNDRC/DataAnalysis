@@ -3,7 +3,6 @@ import sys
 import time
 
 from futures_alias import is_this_week
-sys.path.append('D:\\Project')
 from dataset_factory import DataSetFactory
 import pandas as pd
 import numpy as np
