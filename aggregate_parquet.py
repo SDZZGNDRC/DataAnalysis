@@ -1,16 +1,43 @@
 from pathlib import Path
-import sys
-import time
 
 from futures_alias import is_this_week
 from dataset_factory import DataSetFactory
 import pandas as pd
+from pandas import DataFrame
 import numpy as np
 import os
 import glob
 from typing import List, Dict, Tuple
 
-def split_dataframe(df, chunk_size) -> List[pd.DataFrame]:
+def split_dataframe(df: DataFrame, chunk_size: int) -> List[pd.DataFrame]:
+    """
+    Split a DataFrame into chunks based on a chunk size with respect to unique timestamps.
+
+    The DataFrame is first sorted by the 'timestamp' column. It is then split into chunks where each chunk contains at least 'chunk_size' number of unique timestamps.
+
+    Args:
+        df (DataFrame): The DataFrame to be split. It must contain a 'timestamp' column.
+        chunk_size (int): The minimum number of unique timestamps each chunk should have.
+
+    Returns:
+        List[DataFrame]: A list of DataFrame chunks, each with at least 'chunk_size' unique timestamps.
+
+    Raises:
+        ValueError: If the 'timestamp' column is not found in the DataFrame.
+
+    Example:
+        >>> df = pd.DataFrame({
+        ...     'timestamp': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        ...     'data': ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']
+        ... })
+        >>> chunks = split_dataframe(df, 3)
+        >>> len(chunks)
+        4
+
+    Note:
+        - The function assumes that the 'timestamp' column exists in the DataFrame.
+        - The resulting chunks will not contain the 'chunk_id' column used for splitting.
+    """
     # Sort the dataframe by timestamp
     df.sort_values('timestamp', inplace=True)
 
@@ -26,39 +53,32 @@ def split_dataframe(df, chunk_size) -> List[pd.DataFrame]:
     return chunks
 
 
-def gen(task):
+def gen(task: Tuple[str, List[str]], chunk_size: int = 100_000):
+    """
+    Process a list of parquet files and generate a dataset by filtering and transforming data.
+
+    This function takes a tuple containing the output path and a list of file paths to parquet files,
+    along with an optional chunk size parameter. It processes each file by sorting the data by timestamp,
+    removing unnecessary columns, and converting data types. It then updates a dataset factory with the
+    processed records. If a 'snapshot' action is not encountered in any of the files, the function raises
+    an exception.
+
+    Args:
+    - task: A tuple containing the following elements:
+        - out_path (str): The path where the processed dataset will be stored.
+        - files (List[str]): A list of file paths to the parquet files to be processed.
+    - chunk_size (int, optional): The size of the chunk for the DataSetFactory. Defaults to 100,000.
+
+    Raises:
+    - Exception: If no 'snapshot' action is found in any of the files, an exception is raised indicating that
+                the dataset is incomplete.
+
+    Returns:
+    - None: This function does not return any value. The result is the generation of a processed dataset at
+            the specified output path.
+    """
     out_path, files = task
-    full_df = pd.concat(
-        pd.read_parquet(parquet_file)
-        for parquet_file in files
-    ).sort_values('timestamp')
-    if not os.path.exists(out_path):
-        os.makedirs(out_path)
-    
-    # Drop the columns that are not needed; Change type of some columns
-    full_df = full_df.drop(columns=['checksum', 'prevSeqId', 'seqId'])
-    full_df['price'] = pd.to_numeric(full_df['price'], errors='raise')
-    full_df['size'] = pd.to_numeric(full_df['size'], errors='raise')
-    
-    # Split the full_df into chunks
-    # TODO: Ensure that each chunk have at least one snapshot
-
-    # NOTICE: The chunk_size here is the distinct numbers of timestamps.
-    chunk_size = 1_000_000 # The number of rows in each chunk
-    chunks = split_dataframe(full_df, chunk_size)
-    
-    for i, chunk in enumerate(chunks):
-        start_ts = chunk['timestamp'].min()
-        end_ts = chunk['timestamp'].max()
-
-        # Create the filename for this chunk
-        filename = f'part-{i}-{start_ts}-{end_ts}.parquet'
-        
-        chunk.to_parquet(os.path.join(out_path, filename), engine='pyarrow', compression='gzip', index=False)
-
-def gen2(task: Tuple[str, List[str]], chunk_size: int = 100_000):
-    out_path, files = task
-    dsId = os.path.basename(out_path.rstrip('\\'))
+    dsId = os.path.basename(out_path.rstrip('\\/')) # Remove tailing `\\` and `/`
     instId = dsId.removesuffix('-400')
     meet_snapshot = False
     
@@ -81,24 +101,22 @@ def gen2(task: Tuple[str, List[str]], chunk_size: int = 100_000):
         for row in cur_records:
             if (not meet_snapshot) and row['action'] == 'snapshot':
                 meet_snapshot = True
-                tmp_ts = row['timestamp']
-                print(f'meet snapshot at {tmp_ts}')
-            elif (not meet_snapshot) and row['action'] != 'snapshot':
+                # print(f'meet snapshot at {row['timestamp']}')
+            elif (not meet_snapshot) and row['action'] != 'snapshot': # Skip the records that are located before the `snapshot`.
                 continue
             
             dataset_fact.update(row)
         
     dataset_fact.close()
     if not meet_snapshot:
-        print(f'Can not find any snapshot in any files')
-        exit(-1)
+        raise Exception('Can not find any snapshot in any files')
 
 
 def get_spot():
     files = glob.glob(r'E:\temp\parquet\BTC-USDT-400\OKX-Books-BTC-USDT-400-*.parquet')
     files = sorted(files)
     assert files
-    gen2((r'E:\out3\books\BTC-USDT-400', files), chunk_size=500_000)
+    gen((r'E:\out3\books\BTC-USDT-400', files), chunk_size=500_000)
     
 
 def get_futures_weekly():
@@ -113,11 +131,11 @@ def get_futures_weekly():
         if is_this_week(start_ts, date_s):
             new_files.append(file)
     assert new_files
-    gen2(('E:\\out3\\books\\BTC-USDT-TWEEK', new_files), chunk_size=500_000)
+    gen(('E:\\out3\\books\\BTC-USDT-TWEEK', new_files), chunk_size=500_000)
 
 if __name__ == '__main__':
-    get_futures_weekly()
-
+    # get_futures_weekly()
+    pass
     # grouped_files: Dict[str, List[str]] = {}
     # for file in files:
     #     items = file.split('-')
