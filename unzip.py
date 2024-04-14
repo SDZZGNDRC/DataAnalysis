@@ -13,21 +13,17 @@ def unzip_7z(args):
 
 if __name__ == "__main__":
     if len(sys.argv[1:]) != 2:
-        print('Please input two argv')
+        print('Usage: python script_name.py <input_directory> <output_directory>')
+        print('Arguments:')
+        print('  input_directory: Path to the directory containing the 7z files to be extracted.')
+        print('  output_directory: Path to the directory where the extracted files will be saved.')
         exit(-1)
     zipDir, destDir = sys.argv[1], sys.argv[2]
     if not os.path.isdir(zipDir):
         print(f'Please input directories {zipDir}')
         exit(-1)
-    if not os.path.isdir(destDir):
-        print(f'Please input directories {destDir}')
-        exit(-1)
-    
-    if not os.path.exists(zipDir):
-        print(f'zipDir {zipDir} not existed')
-        exit(-1)
-
     os.makedirs(destDir, exist_ok=True)
+    
     zipfiles = glob.glob(os.path.join(zipDir, 'OKX-*.7z'))
     if not zipfiles:
         print(f'Can not find any zip files under: {zipDir}')

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from futures_alias import is_this_week
-from dataset_factory import DataSetFactory
+from .futures_alias import is_this_week
+from .dataset_factory import DataSetFactory
 import pandas as pd
 from pandas import DataFrame
 import numpy as np
@@ -101,7 +101,7 @@ def gen(task: Tuple[str, List[str]], chunk_size: int = 100_000):
         for row in cur_records:
             if (not meet_snapshot) and row['action'] == 'snapshot':
                 meet_snapshot = True
-                # print(f'meet snapshot at {row['timestamp']}')
+                print(f'meet snapshot at {row['timestamp']} in file {parquet_file}')
             elif (not meet_snapshot) and row['action'] != 'snapshot': # Skip the records that are located before the `snapshot`.
                 continue
             

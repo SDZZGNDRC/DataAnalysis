@@ -73,12 +73,13 @@ def json2parquet(argvs: Tuple[str, str]) -> None:
 
 if __name__ == '__main__':
     if len(sys.argv[1:]) != 2:
-        print('Please input two argv')
+        print('Usage: python script_name.py <input_directory> <output_directory>')
+        print('Arguments:')
+        print('  input_directory: Path to the directory containing the JSON files to be converted to Parquet.')
+        print('  output_directory: Path to the directory where the Parquet files will be saved.')
         exit(-1)
     jsonDir, destPath = sys.argv[1], sys.argv[2]
-    if not (os.path.isdir(jsonDir) and os.path.isdir(destPath)):
-        print('Please input directories')
-        exit(-1)
+
     if not os.path.exists(jsonDir):
         print(f'jsonDir {jsonDir} not existed')
         exit(-1)
