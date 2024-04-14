@@ -78,11 +78,11 @@ def gen(task: Tuple[str, List[str]], chunk_size: int = 100_000):
             the specified output path.
     """
     out_path, files = task
-    dsId = os.path.basename(out_path.rstrip('\\/')) # Remove tailing `\\` and `/`
+    dsId = Path(out_path).name # Remove tailing `\\` and `/`
     instId = dsId.removesuffix('-400')
     meet_snapshot = False
     
-    dataset_fact = DataSetFactory(instId, Path(out_path), chunk_size, False)
+    dataset_fact = DataSetFactory(instId, Path(out_path), chunk_size, True)
     
     total_files = len(files)
 
@@ -101,7 +101,7 @@ def gen(task: Tuple[str, List[str]], chunk_size: int = 100_000):
         for row in cur_records:
             if (not meet_snapshot) and row['action'] == 'snapshot':
                 meet_snapshot = True
-                print(f'meet snapshot at {row['timestamp']} in file {parquet_file}')
+                print(f"meet snapshot at {row['timestamp']} in file {parquet_file}")
             elif (not meet_snapshot) and row['action'] != 'snapshot': # Skip the records that are located before the `snapshot`.
                 continue
             
