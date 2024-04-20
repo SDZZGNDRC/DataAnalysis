@@ -98,6 +98,8 @@ class DataSetFactory:
                 if self.counted_ts % (self.chunk_size/100) == 0:
                     print(f'Loaded {(self.counted_ts%self.chunk_size)/self.chunk_size*100:.1f}%')
             else:
+                if self.cur_ts > new_row['timestamp']:
+                    raise ValueError("the inserted row's timestamp should bigger than the last one")
                 self.cur_chunk.append(new_row)
             
         else:

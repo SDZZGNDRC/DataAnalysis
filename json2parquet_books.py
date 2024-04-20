@@ -57,6 +57,8 @@ def flatten_data(data: List[Dict[str, Any]]) -> pd.DataFrame:
                 price, size, _, numOrders = order # NOTICE: the third element is deprecated according to the OKX API documentation
                 # Append the flattened order to the list
                 flattened_data.append([instId, price, size, int(numOrders), side, int(timestamp), prevSeqId, seqId, action, checksum])
+    # Sort the flattened_data by timestamp
+    flattened_data.sort(key=lambda x: x[5])
     return pd.DataFrame(flattened_data, columns=[ 'instId', 'price', 'size', 'numOrders', 'side', 'timestamp', 'prevSeqId', 'seqId', 'action', 'checksum'])
 
 def json2parquet(argvs: Tuple[str, str]) -> None:

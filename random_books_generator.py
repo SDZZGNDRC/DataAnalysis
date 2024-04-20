@@ -2,7 +2,9 @@ from typing import List, Dict, Any, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys
 from scipy import signal
+from pathlib import Path
 
 def random_books_generator( px: List[float], 
                             tss: List[int], 
@@ -44,28 +46,39 @@ def random_books_generator( px: List[float],
     df.to_parquet(path, compression='gzip', index=False)
 
 
-def sin_books() -> None:
+def sine_books(path: str) -> None:
     x = np.arange(0, 2*np.pi, 0.01)
     y = 1000+np.sin(x)*100
 
     px = [round(_, 1) for _ in y]
     tss = [ _ for _ in range(0, len(x)*1000, 1000) ]
-    random_books_generator(px, tss, r'D:\Project\pybacktest\test\test_exchanges\books\TEST-USDT\part-0-0-628000.parquet')
+    path = Path(path) / 'SINE-USDT'
+    if not path.exists():
+        path.mkdir()
+    random_books_generator(
+        px, tss, 
+        path/'part-0-0-628000.parquet',
+        instId='SINE-USDT',
+        )
     # Plot the sine function
     plt.plot(tss, px)
     plt.xlabel('tss')
     plt.ylabel('px')
     plt.title('Sine Function')
     plt.grid(True)
-    plt.show()
+    # dump as a png picture
+    plt.savefig('Sine.png')
 
-def triangle_books(sample_points: int = 1000, cycles: int = 3) -> None:
+def triangle_books(path: str, sample_points: int = 1000, cycles: int = 3) -> None:
     t = np.linspace(0, 1, sample_points)
     px = (1000 + 100*signal.sawtooth(2 * np.pi * cycles * t, 0.5)).round(1)
     tss = [ _ for _ in range(0, len(t)*1000, 1000) ]
+    path = Path(path) / 'TRIANGLE-USDT'
+    if not path.exists():
+        path.mkdir()
     random_books_generator(
         px, tss, 
-        rf'D:\Project\pybacktest\test\test_exchanges\books\TRIANGLE-USDT\part-0-0-{tss[-1]}.parquet',
+        path/rf'part-0-0-{tss[-1]}.parquet',
         instId='TRIANGLE-USDT'
         )
     # Plot the triangle function
@@ -74,12 +87,22 @@ def triangle_books(sample_points: int = 1000, cycles: int = 3) -> None:
     plt.ylabel('px')
     plt.title('Triangle Function')
     plt.grid(True)
-    plt.show()
+    # dump as a png picture
+    plt.savefig('Triangle.png')
 
 
 if __name__ == '__main__':
-    # sin_books()
-    triangle_books()
+    if len(sys.argv)!= 3:
+        print('Usage: python3 books_generator.py <book_type> <path>')
+        print('book type: sine, triangle')
+        exit(-1)
+    if sys.argv[1] =='sine':
+        sine_books(sys.argv[2])
+    elif sys.argv[1] == 'triangle':
+        triangle_books(sys.argv[2])
+    else:
+        print(f'Unknown book type: {sys.argv[1]}')
+        exit(-1)
 
 
 
