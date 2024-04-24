@@ -16,7 +16,7 @@ from pybacktest.src.bookcore import BookCore
 from pybacktest.src.simTime import SimTime
 
 
-class ABP:
+class AAP:
     def __init__(
                 self, N: int, instId: str,
                 start: int, end: int,
@@ -48,14 +48,14 @@ class ABP:
         if L < self.N:
             raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
         asks = bookcore.asks[:self.N]
-        ask_abp = sum(map(lambda x: x.price*x.amount, asks)) / sum(map(lambda x: x.amount, asks))
+        ask_aap = sum(map(lambda x: x.price, asks)) / self.N
         L = bookcore.depth_bids
         if L < self.N:
             raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
         bids = bookcore.bids[:self.N]
-        bid_abp = sum(map(lambda x: x.price*x.amount, bids)) / sum(map(lambda x: x.amount, bids))
+        bid_aap = sum(map(lambda x: x.price, bids)) / self.N
         
-        return tuple([ask_abp, bid_abp])
+        return tuple([ask_aap, bid_aap])
     
     
     def _gen(self) -> None:
