@@ -103,50 +103,50 @@ def BG_case1(path: str) -> None:
     books: Dict[int, List] = {}
     # price: float, size: float, numOrders: int, side: str, action: str, timestamp: int, instId: str
     
-    # ts: 0
-    books[0] = [
-        [100.0, 0.5, 2, 'ask', 'snapshot', 0, 'CASE1-USDT'],
-        [101.0, 0.4, 2, 'ask', 'snapshot', 0, 'CASE1-USDT'],
-        [102.0, 0.3, 2, 'ask', 'snapshot', 0, 'CASE1-USDT'],
-        [103.0, 0.2, 2, 'ask', 'snapshot', 0, 'CASE1-USDT'],
-        [104.0, 0.1, 2, 'ask', 'snapshot', 0, 'CASE1-USDT'],
-        [ 99.0, 0.5, 2, 'bid', 'snapshot', 0, 'CASE1-USDT'],
-        [ 98.0, 0.4, 2, 'bid', 'snapshot', 0, 'CASE1-USDT'],
-        [ 97.0, 0.3, 2, 'bid', 'snapshot', 0, 'CASE1-USDT'],
-        [ 96.0, 0.2, 2, 'bid', 'snapshot', 0, 'CASE1-USDT'],
-        [ 95.0, 0.1, 2, 'bid', 'snapshot', 0, 'CASE1-USDT'],
+    ts = 0
+    books[ts] = [
+        [100.0, 0.5, 2, 'ask', 'snapshot', ts, 'CASE1-USDT'],
+        [101.0, 0.4, 2, 'ask', 'snapshot', ts, 'CASE1-USDT'],
+        [102.0, 0.3, 2, 'ask', 'snapshot', ts, 'CASE1-USDT'],
+        [103.0, 0.2, 2, 'ask', 'snapshot', ts, 'CASE1-USDT'],
+        [104.0, 0.1, 2, 'ask', 'snapshot', ts, 'CASE1-USDT'],
+        [ 99.0, 0.5, 2, 'bid', 'snapshot', ts, 'CASE1-USDT'],
+        [ 98.0, 0.4, 2, 'bid', 'snapshot', ts, 'CASE1-USDT'],
+        [ 97.0, 0.3, 2, 'bid', 'snapshot', ts, 'CASE1-USDT'],
+        [ 96.0, 0.2, 2, 'bid', 'snapshot', ts, 'CASE1-USDT'],
+        [ 95.0, 0.1, 2, 'bid', 'snapshot', ts, 'CASE1-USDT'],
     ]
     
-    # ts: 1000
-    books[1000] = [
-        [100.0, 0.1, 2, 'ask', 'update', 1000, 'CASE1-USDT'],   # changed
-        [101.0, 1.4, 2, 'ask', 'update', 1000, 'CASE1-USDT'],   # changed
-        [102.0, 0.3, 1, 'ask', 'update', 1000, 'CASE1-USDT'],   # changed
-        [103.0, 0.7, 3, 'ask', 'update', 1000, 'CASE1-USDT'],   # changed
-        [104.0, 0.5, 2, 'ask', 'update', 1000, 'CASE1-USDT'],   # changed
-        [ 99.0, 0.5, 2, 'bid', 'update', 1000, 'CASE1-USDT'],   
-        [ 98.0, 0.4, 2, 'bid', 'update', 1000, 'CASE1-USDT'],   
-        [ 97.0, 0.3, 2, 'bid', 'update', 1000, 'CASE1-USDT'],
-        [ 96.0, 0.2, 2, 'bid', 'update', 1000, 'CASE1-USDT'],
-        [ 95.0, 0.1, 2, 'bid', 'update', 1000, 'CASE1-USDT'],
+    ts = 1000
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'update', ts, 'CASE1-USDT'],   # changed
+        [101.0, 1.4, 2, 'ask', 'update', ts, 'CASE1-USDT'],   # changed
+        [102.0, 0.3, 1, 'ask', 'update', ts, 'CASE1-USDT'],   # changed
+        [103.0, 0.7, 3, 'ask', 'update', ts, 'CASE1-USDT'],   # changed
+        [104.0, 0.5, 2, 'ask', 'update', ts, 'CASE1-USDT'],   # changed
+        [ 99.0, 0.5, 2, 'bid', 'update', ts, 'CASE1-USDT'],   
+        [ 98.0, 0.4, 2, 'bid', 'update', ts, 'CASE1-USDT'],   
+        [ 97.0, 0.3, 2, 'bid', 'update', ts, 'CASE1-USDT'],
+        [ 96.0, 0.2, 2, 'bid', 'update', ts, 'CASE1-USDT'],
+        [ 95.0, 0.1, 2, 'bid', 'update', ts, 'CASE1-USDT'],
     ]
     
-    # ts: 2000
-    books[2000] = [
-        [100.0, 0.1, 2, 'ask', 'update', 2000, 'CASE1-USDT'],
-        [101.0, 1.4, 2, 'ask', 'update', 2000, 'CASE1-USDT'],
-        [102.0, 0.3, 1, 'ask', 'update', 2000, 'CASE1-USDT'],
-        [103.0, 0.7, 3, 'ask', 'update', 2000, 'CASE1-USDT'],
-        [104.0, 0.5, 2, 'ask', 'update', 2000, 'CASE1-USDT'],
-        [ 99.0, 1.5, 1, 'bid', 'update', 2000, 'CASE1-USDT'],   # changed   
-        [ 98.0, 3.4, 2, 'bid', 'update', 2000, 'CASE1-USDT'],   # changed   
-        [ 97.0, 2.3, 4, 'bid', 'update', 2000, 'CASE1-USDT'],   # changed
-        [ 96.0, 1.2, 3, 'bid', 'update', 2000, 'CASE1-USDT'],   # changed
-        [ 95.0, 0.3, 1, 'bid', 'update', 2000, 'CASE1-USDT'],   # changed
+    ts = 2000
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'update', ts, 'CASE1-USDT'],
+        [101.0, 1.4, 2, 'ask', 'update', ts, 'CASE1-USDT'],
+        [102.0, 0.3, 1, 'ask', 'update', ts, 'CASE1-USDT'],
+        [103.0, 0.7, 3, 'ask', 'update', ts, 'CASE1-USDT'],
+        [104.0, 0.5, 2, 'ask', 'update', ts, 'CASE1-USDT'],
+        [ 99.0, 1.5, 1, 'bid', 'update', ts, 'CASE1-USDT'],   # changed   
+        [ 98.0, 3.4, 2, 'bid', 'update', ts, 'CASE1-USDT'],   # changed   
+        [ 97.0, 2.3, 4, 'bid', 'update', ts, 'CASE1-USDT'],   # changed
+        [ 96.0, 1.2, 3, 'bid', 'update', ts, 'CASE1-USDT'],   # changed
+        [ 95.0, 0.3, 1, 'bid', 'update', ts, 'CASE1-USDT'],   # changed
     ]
     t_path = Path(path) / 'CASE1-USDT'
     t_path.mkdir(exist_ok=True)
-    books_generator(t_path / 'part-0-0-2000.parquet', books)
+    books_generator(t_path / f'part-0-0-{ts}.parquet', books)
 
 
 def BG_case2(path: str) -> None:
@@ -154,52 +154,139 @@ def BG_case2(path: str) -> None:
     books: Dict[int, List] = {}
     # price: float, size: float, numOrders: int, side: str, action: str, timestamp: int, instId: str
     
-    # ts: 0
-    books[0] = [
-        [100.0, 0.5, 2, 'ask', 'snapshot', 0, instId],
-        [101.0, 0.4, 2, 'ask', 'snapshot', 0, instId],
-        [102.0, 0.3, 2, 'ask', 'snapshot', 0, instId],
-        [103.0, 0.2, 2, 'ask', 'snapshot', 0, instId],
-        [104.0, 0.1, 2, 'ask', 'snapshot', 0, instId],
-        [ 99.0, 0.5, 2, 'bid', 'snapshot', 0, instId],
-        [ 98.0, 0.4, 2, 'bid', 'snapshot', 0, instId],
-        [ 97.0, 0.3, 2, 'bid', 'snapshot', 0, instId],
-        [ 96.0, 0.2, 2, 'bid', 'snapshot', 0, instId],
-        [ 95.0, 0.1, 2, 'bid', 'snapshot', 0, instId],
+    ts = 0
+    books[ts] = [
+        [100.0, 0.5, 2, 'ask', 'snapshot', ts, instId],
+        [101.0, 0.4, 2, 'ask', 'snapshot', ts, instId],
+        [102.0, 0.3, 2, 'ask', 'snapshot', ts, instId],
+        [103.0, 0.2, 2, 'ask', 'snapshot', ts, instId],
+        [104.0, 0.1, 2, 'ask', 'snapshot', ts, instId],
+        [ 99.0, 0.5, 2, 'bid', 'snapshot', ts, instId],
+        [ 98.0, 0.4, 2, 'bid', 'snapshot', ts, instId],
+        [ 97.0, 0.3, 2, 'bid', 'snapshot', ts, instId],
+        [ 96.0, 0.2, 2, 'bid', 'snapshot', ts, instId],
+        [ 95.0, 0.1, 2, 'bid', 'snapshot', ts, instId],
     ]
     
-    # ts: 1000    blcsi = 11
-    books[1000] = [
-        [100.0, 0.1, 2, 'ask', 'update', 1000, instId],   # changed
-        [101.0, 1.4, 2, 'ask', 'update', 1000, instId],   # changed
-        [102.0, 0.3, 1, 'ask', 'update', 1000, instId],   # changed
-        [103.0, 0.7, 3, 'ask', 'update', 1000, instId],   # changed
-        [104.0, 0.5, 2, 'ask', 'update', 1000, instId],   # changed
-        [105.0, 1.1, 1, 'ask', 'update', 1000, instId],   # changed
+    ts = 1000    # blcsi = 11
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'update', ts, instId],   # changed
+        [101.0, 1.4, 2, 'ask', 'update', ts, instId],   # changed
+        [102.0, 0.3, 1, 'ask', 'update', ts, instId],   # changed
+        [103.0, 0.7, 3, 'ask', 'update', ts, instId],   # changed
+        [104.0, 0.5, 2, 'ask', 'update', ts, instId],   # changed
+        [105.0, 1.1, 1, 'ask', 'update', ts, instId],   # changed
         # [ 99.0, 0.0, 2, 'bid', 'update', 1000, instId],   # changed
-        [ 98.0, 0.4, 2, 'bid', 'update', 1000, instId],   # changed
-        [ 97.0, 0.3, 2, 'bid', 'update', 1000, instId],   # changed
-        [ 96.0, 0.2, 2, 'bid', 'update', 1000, instId],   # changed
-        [ 95.0, 0.1, 2, 'bid', 'update', 1000, instId],   # changed
+        [ 98.0, 0.4, 2, 'bid', 'update', ts, instId],   # changed
+        [ 97.0, 0.3, 2, 'bid', 'update', ts, instId],   # changed
+        [ 96.0, 0.2, 2, 'bid', 'update', ts, instId],   # changed
+        [ 95.0, 0.1, 2, 'bid', 'update', ts, instId],   # changed
     ]
     
-    # ts: 2000    blcsi = 6
-    books[2000] = [
-        [100.0, 0.1, 2, 'ask', 'update', 2000, instId],   
-        [101.0, 1.4, 2, 'ask', 'update', 2000, instId],   
-        [102.0, 0.3, 1, 'ask', 'update', 2000, instId],   
-        [103.0, 0.7, 3, 'ask', 'update', 2000, instId],   
-        [104.0, 0.5, 2, 'ask', 'update', 2000, instId],   
-        [105.0, 0.0, 1, 'ask', 'update', 2000, instId],   # changed
-        [ 99.0, 0.2, 1, 'bid', 'update', 2000, instId],   # changed
-        [ 98.0, 0.4, 2, 'bid', 'update', 2000, instId],   # changed
-        [ 97.0, 0.3, 2, 'bid', 'update', 2000, instId],   # changed
-        [ 96.0, 0.2, 2, 'bid', 'update', 2000, instId],   # changed
-        [ 95.0, 0.1, 2, 'bid', 'update', 2000, instId],   # changed
+    ts = 2000    # blcsi = 6
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'update', ts, instId],   
+        [101.0, 1.4, 2, 'ask', 'update', ts, instId],   
+        [102.0, 0.3, 1, 'ask', 'update', ts, instId],   
+        [103.0, 0.7, 3, 'ask', 'update', ts, instId],   
+        [104.0, 0.5, 2, 'ask', 'update', ts, instId],   
+        # [105.0, 0.0, 1, 'ask', 'update', ts, instId],   # changed
+        [ 99.0, 0.2, 1, 'bid', 'update', ts, instId],   # changed
+        [ 98.0, 0.4, 2, 'bid', 'update', ts, instId],   # changed
+        [ 97.0, 0.3, 2, 'bid', 'update', ts, instId],   # changed
+        [ 96.0, 0.2, 2, 'bid', 'update', ts, instId],   # changed
+        [ 95.0, 0.1, 2, 'bid', 'update', ts, instId],   # changed
     ]
     t_path = Path(path) / instId
     t_path.mkdir(exist_ok=True)
-    books_generator(t_path / 'part-0-0-2000.parquet', books)
+    books_generator(t_path / f'part-0-0-{ts}.parquet', books)
+
+
+def BG_case3(path: str) -> None:
+    instId = 'CASE3-USDT'
+    books: Dict[int, List] = {}
+    # price: float, size: float, numOrders: int, side: str, action: str, timestamp: int, instId: str
+    
+    ts = 0
+    books[ts] = [
+        [100.0, 0.5, 2, 'ask', 'snapshot', ts, instId],
+        [101.0, 0.4, 2, 'ask', 'snapshot', ts, instId],
+        [102.0, 0.3, 2, 'ask', 'snapshot', ts, instId],
+        [103.0, 0.2, 2, 'ask', 'snapshot', ts, instId],
+        [104.0, 0.1, 2, 'ask', 'snapshot', ts, instId],
+        [ 99.0, 0.5, 2, 'bid', 'snapshot', ts, instId],
+        [ 98.0, 0.4, 2, 'bid', 'snapshot', ts, instId],
+        [ 97.0, 0.3, 2, 'bid', 'snapshot', ts, instId],
+        [ 96.0, 0.2, 2, 'bid', 'snapshot', ts, instId],
+        [ 95.0, 0.1, 2, 'bid', 'snapshot', ts, instId],
+    ]
+    
+    ts = 1000    # blcsi = 11
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'update', ts, instId],   # changed
+        [101.0, 1.4, 2, 'ask', 'update', ts, instId],   # changed
+        [102.0, 0.3, 1, 'ask', 'update', ts, instId],   # changed
+        [103.0, 0.7, 3, 'ask', 'update', ts, instId],   # changed
+        [104.0, 0.5, 2, 'ask', 'update', ts, instId],   # changed
+        [105.0, 1.1, 1, 'ask', 'update', ts, instId],   # changed
+        # [ 99.0, 0.0, 2, 'bid', 'update', 1000, instId],   # changed
+        [ 98.0, 0.4, 2, 'bid', 'update', ts, instId],   # changed
+        [ 97.0, 0.3, 2, 'bid', 'update', ts, instId],   # changed
+        [ 96.0, 0.2, 2, 'bid', 'update', ts, instId],   # changed
+        [ 95.0, 0.1, 2, 'bid', 'update', ts, instId],   # changed
+    ]
+    
+    ts = 2000    # blcsi = 6
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'update', ts, instId],   
+        [101.0, 1.4, 2, 'ask', 'update', ts, instId],   
+        [102.0, 0.3, 1, 'ask', 'update', ts, instId],   
+        [103.0, 0.7, 3, 'ask', 'update', ts, instId],   
+        [104.0, 0.5, 2, 'ask', 'update', ts, instId],   
+        # [105.0, 0.0, 1, 'ask', 'update', ts, instId],   # changed
+        [ 99.0, 0.2, 1, 'bid', 'update', ts, instId],   # changed
+        [ 98.0, 0.4, 2, 'bid', 'update', ts, instId],   # changed
+        [ 97.0, 0.3, 2, 'bid', 'update', ts, instId],   # changed
+        [ 96.0, 0.2, 2, 'bid', 'update', ts, instId],   # changed
+        [ 95.0, 0.1, 2, 'bid', 'update', ts, instId],   # changed
+    ]
+    t_path = Path(path) / instId
+    t_path.mkdir(exist_ok=True)
+    books_generator(t_path / f'part-0-0-{ts}.parquet', books)
+    books = {}
+    
+    ts = 3000
+    books[ts] = [
+        [100.0, 0.1, 2, 'ask', 'snapshot', ts, instId],   
+        [101.0, 1.4, 2, 'ask', 'snapshot', ts, instId],   
+        [102.0, 0.3, 1, 'ask', 'snapshot', ts, instId],   
+        [103.0, 0.7, 3, 'ask', 'snapshot', ts, instId],   
+        [104.0, 0.5, 2, 'ask', 'snapshot', ts, instId],   
+        [ 99.0, 0.2, 1, 'bid', 'snapshot', ts, instId],   
+        [ 98.0, 0.4, 2, 'bid', 'snapshot', ts, instId],   
+        [ 97.0, 0.3, 2, 'bid', 'snapshot', ts, instId],   
+        [ 96.0, 0.2, 2, 'bid', 'snapshot', ts, instId],   
+        [ 95.0, 0.1, 2, 'bid', 'snapshot', ts, instId],   
+    ]
+    
+    ts = 4000     # blcsi = 7
+    books[ts] = [
+        [100.0, 0.1, 1, 'ask', 'update', ts, instId],   # changed
+        [101.0, 0.6, 2, 'ask', 'update', ts, instId],   # changed
+        [102.0, 0.3, 1, 'ask', 'update', ts, instId],   
+        # [103.0, 0.7, 3, 'ask', 'update', ts, instId],   
+        [104.0, 0.5, 2, 'ask', 'update', ts, instId],   # changed
+        [105.0, 0.4, 2, 'ask', 'update', ts, instId],   # changed
+        [ 99.5, 0.1, 1, 'bid', 'update', ts, instId],   # changed
+        [ 99.0, 0.2, 1, 'bid', 'update', ts, instId],   # changed
+        # [ 98.0, 0.4, 2, 'bid', 'update', ts, instId],   
+        [ 97.0, 0.3, 2, 'bid', 'update', ts, instId],   
+        [ 96.0, 0.2, 2, 'bid', 'update', ts, instId],   
+        [ 95.0, 1.3, 1, 'bid', 'update', ts, instId],   # changed
+    ]
+    
+    
+    books_generator(t_path / f'part-1-{3000}-{ts}.parquet', books)
 
 
 
@@ -209,6 +296,7 @@ if __name__ == '__main__':
         'triangle': BG_triangle,
         'case1': BG_case1,
         'case2': BG_case2,
+        'case3': BG_case3,
     }
     if len(sys.argv)!= 3:
         print('Usage: python3 books_generator.py <book_type> <path>')

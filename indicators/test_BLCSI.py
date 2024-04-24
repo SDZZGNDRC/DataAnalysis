@@ -39,4 +39,18 @@ def test_case_2():
     assert blcsi[2000] == 6
 
 
+def test_case_3():
+    instId = 'CASE3-USDT'
+    path = Path(os.path.abspath(__file__)).parent.parent / 'test' / instId
+    start, end, step = 1000, 4000, 1000
+    blcsi = BLCSI(
+        instId=instId,
+        start=start, end=end, 
+        path=path, step=step
+    )
+    assert blcsi[1000] == 11
+    assert blcsi[2000] == 6
+    assert blcsi[3000] == 0
+    assert blcsi[4000] == 7
+
 
