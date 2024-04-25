@@ -9,7 +9,7 @@ from pybacktest.src.simTime import SimTime
 
 
 
-class TA:
+class TV:
     def __init__(
                 self, N: int, instId: str,
                 start: int, end: int,
@@ -41,12 +41,12 @@ class TA:
         if L < self.N:
             raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
         asks = bookcore.asks[:self.N]
-        ask_ta = sum(map(lambda x: x.amount, asks))
+        ask_ta = sum(map(lambda x: x.price * x.amount, asks))
         L = bookcore.depth_bids
         if L < self.N:
             raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
         bids = bookcore.bids[:self.N]
-        bid_ta = sum(map(lambda x: x.amount, bids))
+        bid_ta = sum(map(lambda x: x.price * x.amount, bids))
         
         return (ask_ta, bid_ta)
 

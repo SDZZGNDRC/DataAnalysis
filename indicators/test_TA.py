@@ -14,10 +14,15 @@ def test_case_1():
         N = 5, instId=instId,
         start=start, end=end, path=path
     )
+    ta_gap = ta.gap
     
     assert ta[pd.Timestamp(   0, unit='ms')] == (1.5, 1.5)
     assert ta[pd.Timestamp(1000, unit='ms')] == (3.0, 1.5)
     assert ta[pd.Timestamp(2000, unit='ms')] == (3.0, 8.700000000000001)
+
+    assert ta_gap[pd.Timestamp(   0, unit='ms')] == 1.5 - 1.5
+    assert ta_gap[pd.Timestamp(1000, unit='ms')] == 3.0 - 1.5
+    assert ta_gap[pd.Timestamp(2000, unit='ms')] == 3.0 - 8.700000000000001
 
 
 def test_case_2():
@@ -29,10 +34,15 @@ def test_case_2():
         N = 4, instId=instId,
         start=start, end=end, path=path
     )
+    ta_gap = ta.gap
     
     assert ta[pd.Timestamp(   0, unit='ms')] == (1.4, 1.4)
     assert ta[pd.Timestamp(1000, unit='ms')] == (2.5, 0.9999999999999999)
     assert ta[pd.Timestamp(2000, unit='ms')] == (2.5, 1.1)
+
+    assert ta_gap[pd.Timestamp(   0, unit='ms')] == 1.4 - 1.4
+    assert ta_gap[pd.Timestamp(1000, unit='ms')] == 2.5 - 0.9999999999999999
+    assert ta_gap[pd.Timestamp(2000, unit='ms')] == 2.5 - 1.1
 
 def test_case_3():
     instId = 'CASE3-USDT'
@@ -43,11 +53,18 @@ def test_case_3():
         N = 4, instId=instId,
         start=start, end=end, path=path
     )
-    
+    ta_gap = ta.gap
+
     assert ta[pd.Timestamp(   0, unit='ms')] == (1.4, 1.4)
     assert ta[pd.Timestamp(1000, unit='ms')] == (2.5, 0.9999999999999999)
     assert ta[pd.Timestamp(2000, unit='ms')] == (2.5, 1.1)
     assert ta[pd.Timestamp(3000, unit='ms')] == (2.5, 1.1)
     assert ta[pd.Timestamp(4000, unit='ms')] == (1.5, 0.8)
+
+    assert ta_gap[pd.Timestamp(   0, unit='ms')] == 1.4 - 1.4
+    assert ta_gap[pd.Timestamp(1000, unit='ms')] == 2.5 - 0.9999999999999999
+    assert ta_gap[pd.Timestamp(2000, unit='ms')] == 2.5 - 1.1
+    assert ta_gap[pd.Timestamp(3000, unit='ms')] == 2.5 - 1.1
+    assert ta_gap[pd.Timestamp(4000, unit='ms')] == 1.5 - 0.8
 
 
