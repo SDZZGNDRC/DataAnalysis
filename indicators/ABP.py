@@ -59,6 +59,7 @@ class ABP:
     
     
     def _gen(self) -> None:
+        # TODO: fill the missing data points
         if self._data_ask:
             return
         simTime = SimTime(self.start, self.end)
@@ -100,6 +101,8 @@ class ABP:
                 None if step is None else step // self.step
             )
             return list(zip(self._data_ask[data_slice], self._data_bid[data_slice]))
+        elif isinstance(key, pd.Timestamp):
+            raise NotImplementedError()
         else:
             raise TypeError("Invalid key type. Key must be an integer or a slice.")
     
