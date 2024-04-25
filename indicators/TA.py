@@ -35,30 +35,93 @@ class TA:
         self.max_interval = max_interval
         self.step = step
         self.check_instId = check_instId
-        self._data_ask: Optional[ndarray] = None
-        self._data_bid: Optional[ndarray] = None
-        self._ts: Optional[ndarray] = None
+        self._data_ask: Optional[pd.Series] = None
+        self._data_bid: Optional[pd.Series] = None
         
         self._gen()
 
 
-    def _calc(self, bookcore: BookCore) -> float:
+    def _calc(self, bookcore: BookCore) -> Tuple[float, float]:
         L = bookcore.depth_asks
         if L < self.N:
             raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
         asks = bookcore.asks[:self.N]
-        ask_abp = sum(map(lambda x: x.price*x.amount, asks)) / sum(map(lambda x: x.amount, asks))
+        ask_ta = sum(map(lambda x: x.amount, asks))
         L = bookcore.depth_bids
         if L < self.N:
             raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
         bids = bookcore.bids[:self.N]
-        bid_abp = sum(map(lambda x: x.price*x.amount, bids)) / sum(map(lambda x: x.amount, bids))
+        bid_ta = sum(map(lambda x: x.amount, bids))
         
-        return tuple([ask_abp, bid_abp])
-    
+        return (ask_ta, bid_ta)
+
 
     def _gen(self) -> None:
-        raise NotImplementedError()
+        if self._data_ask:
+            return
+        simTime = SimTime(self.start, self.end)
+        book = Book(
+            self.instId, simTime, self.path,
+            self.max_interval, self.check_instId
+        )
+        data_ask: Dict[pd.Timestamp, float] = {}
+        data_bid: Dict[pd.Timestamp, float] = {}
+        idx = []
+        while True:
+            cur = book.core
+            ask, bid = self._calc(cur)
+            data_ask[simTime.to_Timestamp()] = ask
+            data_bid[simTime.to_Timestamp()] = bid
+            idx.append(simTime.to_Timestamp())
+            if simTime + self.step <= self.end:
+                simTime.add(self.step)
+            else:
+                break
+        self._data_ask = pd.Series(data_ask, index=idx)
+        self._data_bid = pd.Series(data_bid, index=idx)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return (self._data_ask[pd.Timestamp(key, unit='ms')], self._data_bid[pd.Timestamp(key, unit='ms')])
+        elif isinstance(key, slice):
+            return list(zip(self._data_ask[key], self._data_bid[key]))
+        elif isinstance(key, pd.Timestamp):
+            return (self._data_ask[key], self._data_bid[key])
+        else:
+            raise TypeError("Invalid key type. Key must be an integer or a slice.")
+    
+    
+    def __iter__(self):
+        return iter(zip(deepcopy(self._data_ask), deepcopy(self._data_bid)))
+    
+    
+    def __len__(self):
+        return len(self._data_ask)
+
+    def ask(self, deepcopy: bool = False) -> pd.Series:
+        """
+        Returns the series of asks.
+        """
+        if deepcopy:
+            return self._data_ask.copy()
+        else:
+            return self._data_ask
+
+    def bid(self, deepcopy: bool = False) -> pd.Series:
+        """
+        Returns the series of bids.
+        """
+        if deepcopy:
+            return self._data_bid.copy()
+        else:
+            return self._data_bid
+
+    @property
+    def gap(self) -> pd.Series:
+        """
+        Returns the gap between asks and bids.
+        """
+        return self._data_ask - self._data_bid
 
 
 

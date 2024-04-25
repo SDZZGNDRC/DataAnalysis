@@ -65,7 +65,6 @@ class ABP:
             self.instId, simTime, self.path,
             self.max_interval, self.check_instId
         )
-        # data: List[Tuple[float, float]] = []
         data_ask: Dict[pd.Timestamp, float] = {}
         data_bid: Dict[pd.Timestamp, float] = {}
         idx = []
