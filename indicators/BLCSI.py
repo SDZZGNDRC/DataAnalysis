@@ -34,8 +34,7 @@ class BLCSI:
         self.max_interval = max_interval
         self.step = step
         self.check_instId = check_instId
-        self._data: Optional[ndarray] = None
-        self._ts: Optional[ndarray] = None
+        self._data: Optional[pd.Series] = None
         
         self._gen()
     
@@ -51,18 +50,12 @@ class BLCSI:
             if not asks_1[i].true_eq(asks_2[i]):
                 res += 1
         res += max(bookcore_1.depth_asks, bookcore_2.depth_asks) - L
-        # print(res)
-        # Bids
         L = min(bookcore_1.depth_bids, bookcore_2.depth_bids)
         bids_1, bids_2 = bookcore_1.bids[:L], bookcore_2.bids[:L]
         for i in range(L):
             if not bids_1[i].true_eq(bids_2[i]):
                 res += 1
         res += max(bookcore_1.depth_bids, bookcore_2.depth_bids) - L
-        # print(bookcore_1)
-        # print(bookcore_2)
-        # print(res, L)
-        # exit()
         return res
     
     def _gen(self) -> None:
@@ -74,52 +67,41 @@ class BLCSI:
             self.max_interval, self.check_instId
         )
         last = book.core
-        data = []
+        data: Dict[pd.Timestamp, int] = {}
+        idx: List[pd.Timestamp] = []
         simTime.add(self.step)
         while True:
             cur = book.core
-            data.append(self._diff(cur, last))
+            data[simTime.to_Timestamp()] = self._diff(cur, last)
             last = cur
+            idx.append(simTime.to_Timestamp())
             if simTime + self.step <= self.end:
                 simTime.add(self.step)
             else:
                 break
-        self._ts = np.array(range(self.start, self.end + 1, self.step), dtype=int)
-        self._data = np.array(data, dtype=int)
+        self._data = pd.Series(data, index=idx)
 
     def __getitem__(self, key):
         if isinstance(key, int):
-            # Check if the key is within the range and aligned with the step
-            if not (self.start <= key <= self.end and (key - self.start) % self.step == 0):
-                raise IndexError("Key must be within the range of start and end, and aligned with the step.")
-            # Calculate the index in the data array
-            key_index = (key - self.start) // self.step
-            return self._data[key_index]
+            return self._data[pd.Timestamp(key, unit='ms')]
         elif isinstance(key, slice):
-            # Calculate the start, stop, and step for the slice
-            start, stop, step = key.indices(self.end)
-            # Ensure that the slice is aligned with the BLCSI step
-            if start % self.step != 0 or (stop is not None and stop % self.step != 0 and stop != self.end):
-                raise ValueError("Slice start and stop must be aligned with the BLCSI step.")
-            # Calculate the corresponding slice on the _data array
-            data_slice = slice(
-                (start - self.start) // self.step,
-                None if stop is None else (stop - self.start) // self.step,
-                None if step is None else step // self.step
-            )
-            return self._data[data_slice]
+            return self._data[key]
+        elif isinstance(key, pd.Timestamp):
+            return self._data[key]
         else:
             raise TypeError("Invalid key type. Key must be an integer or a slice.")
     
     
     def __iter__(self):
-        return iter(zip(deepcopy(self._ts), deepcopy(self._data)))
+        return iter(self._data.copy())
     
     
     def __len__(self):
         return len(self._data)
 
-
+    @property
+    def data(self) -> pd.Series:
+        return self._data.copy()
 
 
 
