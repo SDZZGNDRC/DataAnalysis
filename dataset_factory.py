@@ -5,6 +5,7 @@ import pandas as pd
 from typing import Literal
 
 class DataSetFactory:
+    # NOTICE: Only support Books now!
     """
     A factory class for creating and managing data chunks from a continuous data stream.
 
@@ -103,7 +104,7 @@ class DataSetFactory:
                 self.cur_chunk.append(new_row)
             
         else:
-            raise Exception(f'unknown stata {self.state}')
+            raise Exception(f'unknown state {self.state}')
         self._bc.set(new_row)
     
     

@@ -1,7 +1,7 @@
 from glob import glob
 import pandas as pd
 from pathlib import Path
-from aggregate_parquet import gen2
+from .aggregate_parquet import gen
 # price size numOrders side timestamp, action
 # file_1
 data_1 = [[2.0, 0.1, 10, 'bid', 1, 'snapshot'],
@@ -87,7 +87,7 @@ answer_4 = [
 [2.8, 4.9, 2, 'ask', 7, 'snapshot']]
 
 def test_case(tmp_path: Path) -> None:
-    gen2((str(tmp_path/'TEST'), glob(r'./test/*.parquet')), chunk_size=2)
+    gen((str(tmp_path/'TEST'), glob(r'./test/*.parquet')), chunk_size=2)
     
     # Verify
     df_1 = pd.read_parquet(tmp_path/'TEST'/'part-0-1-2.parquet').drop('instId', axis=1)

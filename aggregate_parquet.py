@@ -54,6 +54,7 @@ def split_dataframe(df: DataFrame, chunk_size: int) -> List[pd.DataFrame]:
 
 
 def gen(task: Tuple[str, List[str]], chunk_size: int = 100_000):
+    # NOTICE: Only support books now.
     """
     Process a list of parquet files and generate a dataset by filtering and transforming data.
 
