@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import pytest
 
-from aggregate_parquet import split_dataframe  # Replace 'your_module' with the actual module name
+from .aggregate_parquet import split_dataframe  # Replace 'your_module' with the actual module name
 
 def test_split_dataframe():
     # Create a sample dataframe

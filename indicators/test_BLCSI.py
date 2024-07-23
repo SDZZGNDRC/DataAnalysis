@@ -54,3 +54,15 @@ def test_case_3():
     assert blcsi[4000] == 7
 
 
+def test_case_4():
+    instId = 'TRIANGLE-USDT'
+    path = Path(os.path.abspath(__file__)).parent.parent / 'test' / instId
+    start, end, step = 1000, 149000, 1000
+    blcsi = BLCSI(
+        instId=instId,
+        start=start, end=end, 
+        path=path, step=step
+    )
+    assert all([blcsi[i*step+start] == 10 for i in range(len(blcsi))])
+
+
