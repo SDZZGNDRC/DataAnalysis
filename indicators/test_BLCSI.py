@@ -8,50 +8,80 @@ from .BLCSI import BLCSI
 def test_case_0():
     path = Path(os.path.abspath(__file__)).parent.parent / 'test' / 'SINE-USDT'
     start, end, step = 1000, 149000, 1000
-    blcsi = BLCSI(
+    ask_blcsi = BLCSI(
         instId='SINE-USDT',
         start=start, end=end, 
-        path=path, step=step
+        path=path, side='ask', step=step
     )
-    assert all([blcsi[i*step+start] == 10 for i in range(len(blcsi))])
+    bid_blcsi = BLCSI(
+        instId='SINE-USDT',
+        start=start, end=end, 
+        path=path, side='bid', step=step
+    )
+    assert all([ask_blcsi[i*step+start] == 5 for i in range(len(ask_blcsi))])
+    assert all([bid_blcsi[i*step+start] == 5 for i in range(len(bid_blcsi))])
 
 def test_case_1():
     path = Path(os.path.abspath(__file__)).parent.parent / 'test' / 'CASE1-USDT'
     start, end, step = 1000, 2000, 1000
-    blcsi = BLCSI(
+    ask_blcsi = BLCSI(
         instId='CASE1-USDT',
         start=start, end=end, 
-        path=path, step=step
+        path=path, side='ask', step=step
     )
-    assert all([blcsi[i*step+start] == 5 for i in range(len(blcsi))])
+    bid_blcsi = BLCSI(
+        instId='CASE1-USDT',
+        start=start, end=end, 
+        path=path, side='bid', step=step
+    )
+    assert ask_blcsi[1000] == 5
+    assert bid_blcsi[1000] == 0
+    assert ask_blcsi[2000] == 0
+    assert bid_blcsi[2000] == 5
 
 
 def test_case_2():
     instId = 'CASE2-USDT'
     path = Path(os.path.abspath(__file__)).parent.parent / 'test' / instId
     start, end, step = 1000, 2000, 1000
-    blcsi = BLCSI(
+    ask_blcsi = BLCSI(
         instId=instId,
         start=start, end=end, 
-        path=path, step=step
+        path=path, side='ask', step=step
     )
-    assert blcsi[1000] == 11
-    assert blcsi[2000] == 6
+    bid_blcsi = BLCSI(
+        instId=instId,
+        start=start, end=end, 
+        path=path, side='bid', step=step
+    )
+    assert ask_blcsi[1000] == 6
+    assert bid_blcsi[1000] == 5
+    assert ask_blcsi[2000] == 1
+    assert bid_blcsi[2000] == 5
 
 
 def test_case_3():
     instId = 'CASE3-USDT'
     path = Path(os.path.abspath(__file__)).parent.parent / 'test' / instId
     start, end, step = 1000, 4000, 1000
-    blcsi = BLCSI(
+    ask_blcsi = BLCSI(
         instId=instId,
         start=start, end=end, 
-        path=path, step=step
+        path=path, side='ask', step=step
     )
-    assert blcsi[1000] == 11
-    assert blcsi[2000] == 6
-    assert blcsi[3000] == 0
-    assert blcsi[4000] == 7
+    bid_blcsi = BLCSI(
+        instId=instId,
+        start=start, end=end, 
+        path=path, side='bid', step=step
+    )
+    assert ask_blcsi[1000] == 6
+    assert bid_blcsi[1000] == 5
+    assert ask_blcsi[2000] == 1
+    assert bid_blcsi[2000] == 5
+    assert ask_blcsi[3000] == 0
+    assert bid_blcsi[3000] == 0
+    assert ask_blcsi[4000] == 4
+    assert bid_blcsi[4000] == 3
 
 
 def test_case_4():
