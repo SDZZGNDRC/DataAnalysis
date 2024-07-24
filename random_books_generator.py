@@ -98,6 +98,94 @@ def BG_triangle(path: str, sample_points: int = 1000, cycles: int = 3) -> None:
     # dump as a png picture
     plt.savefig('Triangle.png')
 
+def BG_square(path: str, sample_points: int = 1000, cycles: int = 3) -> None:
+    t = np.linspace(0, 1, sample_points)
+    px = (1000 + 100*signal.square(2 * np.pi * cycles * t)).round(1)
+    tss = [ _ for _ in range(0, len(t)*1000, 1000) ]
+    path = Path(path) / 'SQUARE-USDT'
+    if not path.exists():
+        path.mkdir()
+    random_books_generator(
+        px, tss, 
+        path / rf'part-0-0-{tss[-1]}.parquet',
+        instId='SQUARE-USDT'
+        )
+    # Plot the square function
+    plt.plot(tss, px)
+    plt.xlabel('tss')
+    plt.ylabel('px')
+    plt.title('Square Function')
+    plt.grid(True)
+    # dump as a png picture
+    plt.savefig('Square.png')
+
+def BG_gaussian(path: str, sample_points: int = 1000, mean: float = 0.0, stddev: float = 1.0) -> None:
+    t = np.linspace(-1, 1, sample_points)
+    px = (1000 + 100 * np.exp(-((t - mean) ** 2) / (2 * stddev ** 2))).round(1)
+    tss = [ _ for _ in range(0, len(t)*1000, 1000) ]
+    path = Path(path) / 'GAUSSIAN-USDT'
+    if not path.exists():
+        path.mkdir()
+    random_books_generator(
+        px, tss, 
+        path / rf'part-0-0-{tss[-1]}.parquet',
+        instId='GAUSSIAN-USDT'
+        )
+    # Plot the Gaussian function
+    plt.plot(tss, px)
+    plt.xlabel('tss')
+    plt.ylabel('px')
+    plt.title('Gaussian Function')
+    plt.grid(True)
+    # dump as a png picture
+    plt.savefig('Gaussian.png')
+
+def BG_piecewise_linear(path: str, sample_points: int = 1000) -> None:
+    t = np.linspace(0, 1, sample_points)
+    px = np.piecewise(t, [t < 0.25, (t >= 0.25) & (t < 0.5), (t >= 0.5) & (t < 0.75), t >= 0.75],
+                        [lambda t: 1000 + 100 * t, 
+                         lambda t: 1025 - 100 * t, 
+                         lambda t: 950 + 100 * t, 
+                         lambda t: 1000 - 100 * t]).round(1)
+    tss = [ _ for _ in range(0, len(t)*1000, 1000) ]
+    path = Path(path) / 'PIECEWISE-LINEAR-USDT'
+    if not path.exists():
+        path.mkdir()
+    random_books_generator(
+        px, tss, 
+        path / rf'part-0-0-{tss[-1]}.parquet',
+        instId='PIECEWISE-LINEAR-USDT'
+        )
+    # Plot the piecewise linear function
+    plt.plot(tss, px)
+    plt.xlabel('tss')
+    plt.ylabel('px')
+    plt.title('Piecewise Linear Function')
+    plt.grid(True)
+    # dump as a png picture
+    plt.savefig('Piecewise_Linear.png')
+
+def BG_const(path: str, sample_points: int = 1000, value: float = 1000.0) -> None:
+    t = np.linspace(0, 1, sample_points)
+    px = np.full(sample_points, value).round(1)
+    tss = [ _ for _ in range(0, len(t)*1000, 1000) ]
+    path = Path(path) / 'CONST-USDT'
+    if not path.exists():
+        path.mkdir()
+    random_books_generator(
+        px, tss, 
+        path / rf'part-0-0-{tss[-1]}.parquet',
+        instId='CONST-USDT'
+        )
+    # Plot the constant function
+    plt.plot(tss, px)
+    plt.xlabel('tss')
+    plt.ylabel('px')
+    plt.title('Constant Function')
+    plt.grid(True)
+    # dump as a png picture
+    plt.savefig('Constant.png')
+
 
 def BG_case1(path: str) -> None:
     books: Dict[int, List] = {}
@@ -294,6 +382,10 @@ if __name__ == '__main__':
     options = {
         'sine': BG_sine,
         'triangle': BG_triangle,
+        'square': BG_square,
+        'gaussian': BG_gaussian,
+        'piecewise-linear': BG_piecewise_linear,
+        'const': BG_const,
         'case1': BG_case1,
         'case2': BG_case2,
         'case3': BG_case3,
