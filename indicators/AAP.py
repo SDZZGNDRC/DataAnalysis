@@ -55,7 +55,8 @@ class AAP:
                 raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
             bids = bookcore.bids[:self.N]
             res = sum(map(lambda x: x.price, bids)) / self.N
-        
+        else:
+            raise ValueError(f"side must be 'ask' or 'bid', but {self.side}")
         return res
     
     
