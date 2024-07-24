@@ -1,9 +1,6 @@
 '''
 Amount-Based Price
 '''
-import glob
-import os
-import math
 from pathlib import Path
 from typing import Dict, List, Literal, Tuple, Union, Callable, Optional
 import pandas as pd
@@ -21,6 +18,7 @@ class ABP:
                 self, N: int, instId: str,
                 start: int, end: int,
                 path: Path, max_interval: int = 10_000, 
+                side: Literal['ask', 'bid'] = 'ask',
                 step: int = 1000, check_instId: bool = True) -> None:
         if N <= 0:
             raise ValueError(f"N must be positive, but {N} was given.")
@@ -32,97 +30,78 @@ class ABP:
         
         if end % step != 0:
             raise ValueError(f"end must be a multiple of {step}")
+        if side not in ['ask', 'bid']:
+            raise ValueError(f"side must be 'ask' or 'bid', but {side} was given.")
         self.end = end
         self.path = path
         self.max_interval = max_interval
+        self.side = side
         self.step = step
         self.check_instId = check_instId
-        self._data_ask: Optional[pd.Series] = None
-        self._data_bid: Optional[pd.Series] = None
+        self._data: Optional[pd.Series] = None
         
         self._gen()
     
-    def _calc(self, bookcore: BookCore) -> Tuple[float, float]:
-        L = bookcore.depth_asks
-        if L < self.N:
-            raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
-        asks = bookcore.asks[:self.N]
-        ask_abp = sum(map(lambda x: x.price*x.amount, asks)) / sum(map(lambda x: x.amount, asks))
-        L = bookcore.depth_bids
-        if L < self.N:
-            raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
-        bids = bookcore.bids[:self.N]
-        bid_abp = sum(map(lambda x: x.price*x.amount, bids)) / sum(map(lambda x: x.amount, bids))
+    def _calc(self, bookcore: BookCore) -> float:
+        res = 0.0
+        if self.side == 'ask':
+            L = bookcore.depth_asks
+            if L < self.N:
+                raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
+            asks = bookcore.asks[:self.N]
+            res = sum(map(lambda x: x.price*x.amount, asks)) / sum(map(lambda x: x.amount, asks))
+        elif self.side == 'bid':
+            L = bookcore.depth_bids
+            if L < self.N:
+                raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
+            bids = bookcore.bids[:self.N]
+            res = sum(map(lambda x: x.price*x.amount, bids)) / sum(map(lambda x: x.amount, bids))
         
-        return tuple([ask_abp, bid_abp])
+        return res
     
     
     def _gen(self) -> None:
-        if self._data_ask:
+        if self._data:
             return
         simTime = SimTime(self.start, self.end)
         book = Book(
             self.instId, simTime, self.path,
             self.max_interval, self.check_instId
         )
-        data_ask: Dict[pd.Timestamp, float] = {}
-        data_bid: Dict[pd.Timestamp, float] = {}
+        data: Dict[pd.Timestamp, float] = {}
         idx = []
         while True:
             cur = book.core
-            ask, bid = self._calc(cur)
-            data_ask[simTime.to_Timestamp()] = ask
-            data_bid[simTime.to_Timestamp()] = bid
+            val = self._calc(cur)
+            data[simTime.to_Timestamp()] = val
             idx.append(simTime.to_Timestamp())
             if simTime + self.step <= self.end:
                 simTime.add(self.step)
             else:
                 break
-        self._data_ask = pd.Series(data_ask, index=idx)
-        self._data_bid = pd.Series(data_bid, index=idx)
+        self._data = pd.Series(data, index=idx)
         
 
 
     def __getitem__(self, key):
         if isinstance(key, int):
-            return (self._data_ask[pd.Timestamp(key, unit='ms')], self._data_bid[pd.Timestamp(key, unit='ms')])
+            return self._data[pd.Timestamp(key, unit='ms')]
         elif isinstance(key, slice):
-            return list(zip(self._data_ask[key], self._data_bid[key]))
+            return self._data[key]
         elif isinstance(key, pd.Timestamp):
-            return (self._data_ask[key], self._data_bid[key])
+            return self._data[key]
         else:
             raise TypeError("Invalid key type. Key must be an integer or a slice.")
     
     
     def __iter__(self):
-        return iter(zip(deepcopy(self._data_ask), deepcopy(self._data_bid)))
+        return iter(deepcopy(self._data))
     
     
     def __len__(self):
-        return len(self._data_ask)
+        return len(self._data)
 
-    def ask(self, deepcopy: bool = False) -> pd.Series:
-        """
-        Returns the series of asks.
-        """
-        if deepcopy:
-            return self._data_ask.copy()
-        else:
-            return self._data_ask
-
-    def bid(self, deepcopy: bool = False) -> pd.Series:
-        """
-        Returns the series of bids.
-        """
-        if deepcopy:
-            return self._data_bid.copy()
-        else:
-            return self._data_bid
 
     @property
-    def gap(self) -> pd.Series:
-        """
-        Returns the gap between asks and bids.
-        """
-        return self._data_ask - self._data_bid
-
+    def data(self) -> pd.Series:
+        return deepcopy(self._data)
