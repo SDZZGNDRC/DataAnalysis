@@ -19,8 +19,35 @@ Then we should use `indicator` to process the data set and dump the data into In
 
 ### BLCSI
 
-| Measurement | Tag key | Tag key | Field key |
-| :---------: | :------: | :------: | :-------: |
-| BLCSI | exchange | instId | value |
+- **Measurement**: BLCSI
+- **Tag key**: exchange, instId, instType, level, side
+- **Field key**: val
 
+
+### ABP
+
+- **Measurement**: ABP
+- **Tag key**: exchange, instId, instType, level, side
+- **Field key**: val
+
+
+### AAP
+
+- **Measurement**: AAP
+- **Tag key**: exchange, instId, instType, level, side
+- **Field key**: val
+
+
+### TA
+
+- **Measurement**: TA
+- **Tag key**: exchange, instId, instType, level, side
+- **Field key**: val
+
+
+### TV
+
+- **Measurement**: TV
+- **Tag key**: exchange, instId, instType, level, side
+- **Field key**: val
 

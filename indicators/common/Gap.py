@@ -14,8 +14,8 @@ from pybacktest.src.simTime import SimTime
 
 
 class Gap:
-    def __init__(self, ts1: pd.Series, ts2: pd.Series) -> None:
-        self._ts = ts1 - ts2
+    def __init__(self, ts1: pd.Series, ts2: pd.Series, fill_value: float = 0) -> None:
+        self._ts = ts1.sub(ts2, fill_value=fill_value)
     
     def __getitem__(self, key):
         return self._ts[key]
