@@ -33,7 +33,7 @@ class DataSetFactory:
         Exception: If the first data point is not a snapshot.
         Exception: If the chunk_size is less than 2 during initialization.
     """
-    def __init__(self, instId: str, path: Path, chunk_size: int = 100_000, check_instId: bool = True) -> None:
+    def __init__(self, instId: str, path: Path, chunk_size: int = 100_000, check_instId: bool = True, no_snapshot: bool = False, depth: int = 400) -> None:
         """
         Initializes the DataSetFactory with the given parameters and sets the initial state.
 
@@ -42,6 +42,7 @@ class DataSetFactory:
             path (Path): The output directory path where the partitioned parquet files will be saved.
             chunk_size (int): The number of data rows to include in each data chunk (default is 100,000).
             check_instId (bool): Flag to indicate whether to check the instrument identifier (default is True).
+            no_snapshot (bool): Flag to indicate whether 
         """
         self.out_path = path
         # Make sure the path existed. 
@@ -52,6 +53,8 @@ class DataSetFactory:
         self.chunk_size = chunk_size
         self._bc = BookCore(instId, check_instId)
         self.instId = instId
+        self.no_snapshot = no_snapshot
+        self.depth = depth
         self.counted_ts = 0
         self.cur_chunk = []
         self.cur_ts = -1
@@ -73,38 +76,38 @@ class DataSetFactory:
             Exception: If the first data point is not a snapshot.
             Exception: If an unknown state is encountered.
         """
-        if self.counted_ts == 0 and new_row['action'] != 'snapshot':
+        if self.counted_ts == 0 and new_row['action'] != 'snapshot' and not self.no_snapshot:
             raise Exception('The first data point must be snapshot')
-        
-        if self.state == 'INIT':
-            if self.cur_ts != new_row['timestamp']:
-                if self.counted_ts % self.chunk_size == 1: # Finished INIT
-                    self.state = 'LOAD'
-                    self.cur_chunk = self.get_snapshot(self.cur_ts)
-                    self.cur_chunk.append(new_row)
-                self.counted_ts += 1
-                self.cur_ts = new_row['timestamp']
-            else: # Wait for INIT to finished
-                pass
-        elif self.state == 'LOAD':
-            if self.cur_ts != new_row['timestamp']:
-                if self.counted_ts % self.chunk_size == 0: # Finished LOAD
-                    self.state = 'INIT'
-                    self._dump() # Generate partition file
+        if not (self.no_snapshot and not self._bc.filled(self.depth)):
+            if self.state == 'INIT':
+                if self.cur_ts != new_row['timestamp']:
+                    if self.counted_ts % self.chunk_size == 1: # Finished INIT
+                        self.state = 'LOAD'
+                        self.cur_chunk = self.get_snapshot(self.cur_ts)
+                        self.cur_chunk.append(new_row)
+                    self.counted_ts += 1
+                    self.cur_ts = new_row['timestamp']
+                else: # Wait for INIT to finished
+                    pass
+            elif self.state == 'LOAD':
+                if self.cur_ts != new_row['timestamp']:
+                    if self.counted_ts % self.chunk_size == 0: # Finished LOAD
+                        self.state = 'INIT'
+                        self._dump() # Generate partition file
+                    else:
+                        self.cur_chunk.append(new_row)
+                    self.cur_ts = new_row['timestamp']
+                    self.counted_ts += 1
+                    
+                    if self.counted_ts % (self.chunk_size/100) == 0:
+                        print(f'Loaded {(self.counted_ts%self.chunk_size)/self.chunk_size*100:.1f}%')
                 else:
+                    if self.cur_ts > new_row['timestamp']:
+                        raise ValueError("the inserted row's timestamp should bigger than the last one")
                     self.cur_chunk.append(new_row)
-                self.cur_ts = new_row['timestamp']
-                self.counted_ts += 1
                 
-                if self.counted_ts % (self.chunk_size/100) == 0:
-                    print(f'Loaded {(self.counted_ts%self.chunk_size)/self.chunk_size*100:.1f}%')
             else:
-                if self.cur_ts > new_row['timestamp']:
-                    raise ValueError("the inserted row's timestamp should bigger than the last one")
-                self.cur_chunk.append(new_row)
-            
-        else:
-            raise Exception(f'unknown state {self.state}')
+                raise Exception(f'unknown state {self.state}')
         self._bc.set(new_row)
     
     
