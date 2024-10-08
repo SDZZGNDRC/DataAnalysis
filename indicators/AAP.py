@@ -62,64 +62,61 @@ class AAP:
         
         self._gen()
     
-    def _calc(self, bookcore: BookCore) -> float:
+    @staticmethod
+    def _calc(bookcore: BookCore, N: int, side: str) -> float:
         res = 0.0
-        if self.side == 'ask':
+        if side == 'ask':
             L = bookcore.depth_asks
-            if L < self.N:
-                raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
-            asks = bookcore.asks[:self.N]
-            res = sum(map(lambda x: x.price, asks)) / self.N
-        elif self.side == 'bid':
+            if L < N:
+                raise ValueError(f"N must be smaller than max-depth, but {L} < {N}")
+            asks = bookcore.asks[:N]
+            res = sum(map(lambda x: x.price, asks)) / N
+        elif side == 'bid':
             L = bookcore.depth_bids
-            if L < self.N:
-                raise ValueError(f"N must be smaller than max-depth, but {L} < {self.N}")
-            bids = bookcore.bids[:self.N]
-            res = sum(map(lambda x: x.price, bids)) / self.N
+            if L < N:
+                raise ValueError(f"N must be smaller than max-depth, but {L} < {N}")
+            bids = bookcore.bids[:N]
+            res = sum(map(lambda x: x.price, bids)) / N
         else:
-            raise ValueError(f"side must be 'ask' or 'bid', but {self.side}")
+            raise ValueError(f"side must be 'ask' or 'bid', but {side}")
         return res
     
     
     def _gen(self) -> None:
-        # Calculate the total time consumption of this method
         start_time = time.time()
 
         if self._data:
             return
         print('AAP: generating data...')
 
-        simTime = SimTime(self.start, self.end)
-        book = Book(
-            self.instId, simTime, self.path,
-            self.max_interval, self.check_instId
-        )
-        data: Dict[pd.Timestamp, float] = {}
-        idx = []
-        
-        total_steps = (self.end - self.start) // self.step
-        progress_step = max(1, total_steps // 10)  # Update progress every 10% or at least once
-        
-        for current_step in range(total_steps + 1):
-            cur = book.core
-            val = self._calc(cur)
-            data[simTime.to_Timestamp()] = val
-            idx.append(simTime.to_Timestamp())
-            
-            # Print progress
-            if current_step % progress_step == 0 or current_step == total_steps:
-                progress = (current_step / total_steps) * 100
-                print(f"Generating data: {progress:.1f}%")
-            
-            if simTime + self.step <= self.end:
-                simTime.add(self.step)
-            else:
-                break
-        
-        self._data = pd.Series(data, index=idx)
-        print('AAP: data generation complete.')
+        # Find relevant parquet files
+        relevant_files = self._get_relevant_files()
+        print(f'relevant_files: {relevant_files}')
 
-        # Calculate and output the total time consumption and average time per entry
+        # Determine the number of processes to use
+        num_processes = min(multiprocessing.cpu_count(), len(relevant_files))
+        print(f'num_processes: {num_processes}')
+
+        # Split the files into chunks for each process
+        file_chunks = self._split_files(relevant_files, num_processes)
+        print(f'file_chunks: {file_chunks}')
+
+        # Create a pool of worker processes
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            # Use partial to create a function with fixed arguments
+            partial_process_chunk = partial(self._process_chunk, instId=self.instId, N=self.N, 
+                                            side=self.side, step=self.step, check_instId=self.check_instId)
+            
+            # Map the chunks to the worker processes
+            results = pool.map(partial_process_chunk, file_chunks)
+
+        # Combine results from all processes
+        combined_data = pd.concat(results).sort_index()
+
+        self._data = combined_data
+        print('AAP: data generation complete.')
+        print(self._data.shape)
+
         end_time = time.time()
         total_time = end_time - start_time
         num_entries = len(self._data)
@@ -128,6 +125,46 @@ class AAP:
         print(f"Total time consumption: {total_time:.2f} seconds")
         print(f"Number of entries generated: {num_entries}")
         print(f"Average time per entry: {avg_time_per_entry:.8f} seconds")
+
+    def _get_relevant_files(self):
+        relevant_files = []
+        for file in glob.glob(os.path.join(self.path, 'part-*-*-*.parquet')):
+            start, end = map(int, os.path.splitext(os.path.basename(file))[0].split('-')[2:])
+            if (start <= self.end and end >= self.start) or (self.start <= end and self.end >= start):
+                relevant_files.append(file)
+        return sorted(relevant_files)
+
+    def _split_files(self, files, num_chunks):
+        chunk_size = len(files) // num_chunks
+        return [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
+
+    @staticmethod
+    def _process_chunk(file_chunk, instId, N, side, step, check_instId):
+        start, end = map(int, os.path.splitext(os.path.basename(file_chunk[0]))[0].split('-')[2:])
+        simTime = SimTime(start,end)
+        book = Book(instId, simTime, Path(os.path.dirname(file_chunk[0])), check_instId=check_instId)
+        data = {}
+        # print(f'_process_chunk: original start {start}, end {end}')
+        for file in file_chunk:
+            start, end = map(int, os.path.splitext(os.path.basename(file))[0].split('-')[-2:])
+            if start % step != 0:
+                start = start - (start % step) + step
+            if end % step != 0:
+                end   = end - (end % step)
+            if simTime < start:
+                simTime.set(start)
+            # print(f'_process_chunk: {start}, {end}')
+            while True:
+                cur = book.core
+                val = AAP._calc(cur, N, side)
+                data[simTime.to_Timestamp()] = val
+                # print(f'_process_chunk: {simTime.to_Timestamp()}')
+                if simTime + step <= min(end, simTime.end):
+                    simTime.add(step)
+                else:
+                    break
+        # print(f'_process_chunk: {data}')
+        return pd.Series(data)
 
     def __getitem__(self, key):
         if isinstance(key, int):
@@ -148,7 +185,7 @@ class AAP:
         return len(self._data)
 
     def dump(self, dest: Literal['influxdb'], 
-             url: str, token: str, org: str, bucket: str) -> None:
+            url: str, token: str, org: str, bucket: str) -> None:
         '''
         Upload data to destination, currently only influxdb is supported.
         
@@ -162,8 +199,9 @@ class AAP:
         if dest != 'influxdb':
             raise ValueError(f"Unsupported destination: {dest}. Only 'influxdb' is currently supported.")
 
-        if self._data is None:
-            raise ValueError("No data available to dump. Make sure to generate data first.")
+        if self._data is None or len(self._data) == 0:
+            print("No data available to dump. Make sure to generate data first.")
+            return
 
         client = InfluxDBClient(url=url, token=token, org=org)
         write_api = client.write_api(write_options=SYNCHRONOUS)
@@ -171,18 +209,19 @@ class AAP:
         
         total_points = len(self._data)
         for i, (timestamp, value) in enumerate(self._data.items(), 1):
-            # print(f'debug: {timestamp}')
             point = Point("AAP") \
                 .tag("instId", self.instId) \
                 .tag("side", self.side) \
                 .tag("N", self.N) \
                 .field("value", value) \
                 .time(timestamp.isoformat(),write_precision=WritePrecision.S)
-            # print(f"Uploading point: {point}")
             write_api.write(bucket=bucket, record=point)
             
-            # Print progress every 10%
-            if i % (total_points // 10) == 0 or i == total_points:
+            # Print progress every 10% or for every point if total_points < 10
+            if total_points >= 10 and (i % (total_points // 10) == 0 or i == total_points):
+                progress = (i / total_points) * 100
+                print(f"Uploading data: {progress:.1f}%")
+            elif total_points < 10:
                 progress = (i / total_points) * 100
                 print(f"Uploading data: {progress:.1f}%")
         
@@ -207,7 +246,7 @@ if __name__ == "__main__":
     url = 'http://localhost:8086'
     token = '4hlxwboUuip5etIZgB_OeFaOhX4Rs8J-a7Y0Nn25gojN6Opxoeb84kRBFh4x67S3Rce4pSBgCjfVMHDD5w-UUQ=='
     org = 'CryptoSpider'
-    bucket = 'test2'
+    bucket = 'test3'
 
     # Create an AAP instance
     aap = AAP(N=N, instId=instId, start=start, end=end, path=path, side=side)
