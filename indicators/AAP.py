@@ -1,3 +1,4 @@
+import time
 import glob
 import os
 import math
@@ -9,6 +10,9 @@ from copy import deepcopy
 
 from datetime import datetime, timezone
 import matplotlib.pyplot as plt
+
+import multiprocessing
+from functools import partial
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
@@ -78,10 +82,13 @@ class AAP:
     
     
     def _gen(self) -> None:
-        # TODO: Profiling this method
+        # Calculate the total time consumption of this method
+        start_time = time.time()
+
         if self._data:
             return
         print('AAP: generating data...')
+
         simTime = SimTime(self.start, self.end)
         book = Book(
             self.instId, simTime, self.path,
@@ -111,6 +118,16 @@ class AAP:
         
         self._data = pd.Series(data, index=idx)
         print('AAP: data generation complete.')
+
+        # Calculate and output the total time consumption and average time per entry
+        end_time = time.time()
+        total_time = end_time - start_time
+        num_entries = len(self._data)
+        avg_time_per_entry = total_time / num_entries if num_entries > 0 else 0
+
+        print(f"Total time consumption: {total_time:.2f} seconds")
+        print(f"Number of entries generated: {num_entries}")
+        print(f"Average time per entry: {avg_time_per_entry:.8f} seconds")
 
     def __getitem__(self, key):
         if isinstance(key, int):
@@ -183,7 +200,7 @@ if __name__ == "__main__":
     N = 20
     instId = 'BTC-USDT-400'
     start = 1690825850000
-    end   = 1690826850000
+    end   = 1691005850000
     path = Path(r'E:\out3\books\BTC-USDT-400')
     side = 'ask'
     dest = 'influxdb'
@@ -197,9 +214,6 @@ if __name__ == "__main__":
 
     # Print out the number of unique timestamps
     print(f"Number of unique timestamps: {len(aap.data.index.unique())}")
-
-    # Print the unique timestamps
-    print(f"Unique timestamps: {aap.data.index.unique()}")
 
     # Dump the data to InfluxDB
     aap.dump(dest=dest, url=url, token=token, org=org, bucket=bucket)
