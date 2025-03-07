@@ -53,7 +53,7 @@ class DataName:
                 
         return False
 
-    def __init__(self, name):
+    def __init__(self, name, suffix: str = ""):
         if not DataName.validate_name(name):
             raise ValueError(f"Invalid data name: {name}")
         
@@ -64,6 +64,10 @@ class DataName:
         self.category = self.splitted_name[1]
         self.start_timestamp = int(self.splitted_name[-2])
         self.end_timestamp = int(self.splitted_name[-1].split(".")[0])
+        
+        if suffix:
+            if self.splitted_name[-1].split(".")[1] != suffix:
+                raise ValueError(f"Invalid data name: {name}, suffix must be {suffix}")
         self.id = "-".join(self.splitted_name[2:-2])
         self.prefix = "-".join(self.splitted_name[:-2])
         
