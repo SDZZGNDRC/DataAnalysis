@@ -33,16 +33,25 @@ def unix_ms_to_iso(unix_timestamp_ms):
     
     return iso_format
 
-class AAP:
+class BL:
+    '''
+    BookLevel
+    '''
     def __init__(
-                self, N: int, instId: str,
+                self, N: Union[int,List[int]], instId: str,
                 start: int, end: int,
                 path: Path, max_interval: int = 10_000, 
                 side: Literal['ask', 'bid'] = 'ask',
                 step: int = 1000, check_instId: bool = True) -> None:
-        if N <= 0:
-            raise ValueError(f"N must be positive, but {N} was given.")
-        self.N = N
+        if isinstance(N, list):
+            if len(N) == 0:
+                raise ValueError("N must be a non-empty list of integers.")
+            self.Ns = list(map(int,N))
+        else:
+            if N <= 0:
+                raise ValueError(f"N must be positive, but {N} was given.")
+            self.Ns = [i for i in range(N)]
+        self.Ns.sort()
         self.instId = instId
         if start % step != 0:
             raise ValueError(f"start must be a multiple of {step}")
@@ -63,22 +72,25 @@ class AAP:
         self._gen()
     
     @staticmethod
-    def _calc(bookcore: BookCore, N: int, side: str) -> float:
-        res = 0.0
+    def _calc(bookcore: BookCore, Ns: List[int], side: str) -> Dict[int,float]:
+        res: Dict[int,float] = {}
+        Ns.sort()
         if side == 'ask':
             L = bookcore.depth_asks
-            if L < N:
-                raise ValueError(f"N must be smaller than max-depth, but {L} < {N}")
-            asks = bookcore.asks[:N]
-            res = sum(map(lambda x: x.price, asks)) / N
+            if L < Ns[-1]:
+                raise ValueError(f"Ns[-1] must be smaller than max-depth {L}, but {L} < {Ns[-1]}")
+            asks = bookcore.asks[:Ns[-1]+1]
+            for n in Ns:
+                res[n] = asks[n]
         elif side == 'bid':
             L = bookcore.depth_bids
             if L < N:
-                raise ValueError(f"N must be smaller than max-depth, but {L} < {N}")
-            bids = bookcore.bids[:N]
-            res = sum(map(lambda x: x.price, bids)) / N
+                raise ValueError(f"Ns[-1] must be smaller than max-depth {L}, but {L} < {Ns[-1]}")
+            bids = bookcore.bids[:Ns[-1]+1]
+            for n in Ns:
+                res[n] = bids[n]
         else:
-            raise ValueError(f"side must be 'ask' or 'bid', but {side}")
+            raise ValueError(f"side must be 'ask' or 'bid', but {side} given...")
         return res
     
     
@@ -87,7 +99,7 @@ class AAP:
 
         if self._data:
             return
-        print('AAP: generating data...')
+        print('BL: generating data...')
 
         # Find relevant parquet files
         relevant_files = self._get_relevant_files()
@@ -104,22 +116,24 @@ class AAP:
         # Create a pool of worker processes
         with multiprocessing.Pool(processes=num_processes) as pool:
             # Use partial to create a function with fixed arguments
-            partial_process_chunk = partial(self._process_chunk, instId=self.instId, N=self.N, 
+            partial_process_chunk = partial(self._process_chunk, instId=self.instId, Ns=self.Ns, 
                                             side=self.side, step=self.step, check_instId=self.check_instId)
             
             # Map the chunks to the worker processes
             results = pool.map(partial_process_chunk, file_chunks)
 
         # Combine results from all processes
-        combined_data = pd.concat(results).sort_index()
+        combined_data = {}
+        for n in self.Ns:
+            combined_data[n] = pd.concat(results[n]).sort_index()
 
         self._data = combined_data
-        print('AAP: data generation complete.')
+        print('BL: data generation complete.')
         print(self._data.shape)
 
         end_time = time.time()
         total_time = end_time - start_time
-        num_entries = len(self._data)
+        num_entries = len(self._data[self.Ns[0]]) * len(self.Ns)
         avg_time_per_entry = total_time / num_entries if num_entries > 0 else 0
 
         print(f"Total time consumption: {total_time:.2f} seconds")
@@ -139,16 +153,11 @@ class AAP:
         return [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
 
     @staticmethod
-    def _process_chunk(file_chunk, instId, N, side, step, check_instId):
-        # Sort the files by their start time
-        file_chunk.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split('-')[2]))
-        start, _ = map(int, os.path.splitext(os.path.basename(file_chunk[0]))[0].split('-')[2:])
-        _,   end = map(int, os.path.splitext(os.path.basename(file_chunk[-1]))[0].split('-')[2:])
-        if end <= start:
-            print(f'error file_chunk: {file_chunk}')
+    def _process_chunk(file_chunk, instId, Ns, side, step, check_instId) -> Dict[int,pd.Series]:
+        start, end = map(int, os.path.splitext(os.path.basename(file_chunk[0]))[0].split('-')[2:])
         simTime = SimTime(start,end)
         book = Book(instId, simTime, Path(os.path.dirname(file_chunk[0])), check_instId=check_instId)
-        data = {}
+        data = {n: {} for n in Ns}
         # print(f'_process_chunk: original start {start}, end {end}')
         for file in file_chunk:
             start, end = map(int, os.path.splitext(os.path.basename(file))[0].split('-')[-2:])
@@ -161,34 +170,37 @@ class AAP:
             # print(f'_process_chunk: {start}, {end}')
             while True:
                 cur = book.core
-                val = AAP._calc(cur, N, side)
-                data[simTime.to_Timestamp()] = val
+                val = BL._calc(cur, Ns, side)
+                for n in Ns:
+                    data[n][simTime.to_Timestamp()] = val[n]
                 # print(f'_process_chunk: {simTime.to_Timestamp()}')
                 if simTime + step <= min(end, simTime.end):
                     simTime.add(step)
                 else:
-                    print(f'_process_chunk: processed {file}...')
                     break
         # print(f'_process_chunk: {data}')
-        return pd.Series(data)
+        res = {}
+        for n in Ns:
+            res[n] = pd.Series(data[n])
+        return res
 
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return self._data[pd.Timestamp(key, unit='ms')]
-        elif isinstance(key, slice):
-            return self._data[key]
-        elif isinstance(key, pd.Timestamp):
-            return self._data[key]
-        else:
-            raise TypeError("Invalid key type. Key must be an integer or a slice.")
+    # def __getitem__(self, key):
+    #     if isinstance(key, int):
+    #         return self._data[pd.Timestamp(key, unit='ms')]
+    #     elif isinstance(key, slice):
+    #         return self._data[key]
+    #     elif isinstance(key, pd.Timestamp):
+    #         return self._data[key]
+    #     else:
+    #         raise TypeError("Invalid key type. Key must be an integer or a slice.")
     
     
-    def __iter__(self):
-        return iter(deepcopy(self._data))
+    # def __iter__(self):
+    #     return iter(deepcopy(self._data))
     
     
-    def __len__(self):
-        return len(self._data)
+    # def __len__(self):
+    #     return len(self._data)
 
     def dump(self, dest: Literal['influxdb'], 
             url: str, token: str, org: str, bucket: str) -> None:
@@ -211,11 +223,12 @@ class AAP:
 
         client = InfluxDBClient(url=url, token=token, org=org)
         write_api = client.write_api(write_options=SYNCHRONOUS)
-        print(f'AAP: uploading data to {dest}...')
+        print(f'BL: uploading data to {dest}...')
         
         total_points = len(self._data)
         for i, (timestamp, value) in enumerate(self._data.items(), 1):
-            point = Point("AAP") \
+            # FIXME: Use batch-write instead.
+            point = Point("BL") \
                 .tag("instId", self.instId) \
                 .tag("side", self.side) \
                 .tag("N", self.N) \
@@ -246,9 +259,6 @@ if __name__ == "__main__":
     instId = 'BTC-USDT-400'
     start = 1690825850000
     end   = 1693571964000
-    # 1693022934201
-    # 1693077134000
-    # 1693077133807
     path = Path(r'E:\out3\books\BTC-USDT-400')
     side = 'ask'
     dest = 'influxdb'
