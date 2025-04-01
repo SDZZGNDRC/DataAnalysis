@@ -1,10 +1,12 @@
+from typing import Tuple
+
 import glob
 import os
 import sys
 from multiprocessing import Pool
 import py7zr
 
-def unzip_7z(args):
+def unzip_7z(args: Tuple[str, str]):
     zipPath, destPath = args
     with py7zr.SevenZipFile(zipPath, mode='r') as z:
         z.extractall(destPath)

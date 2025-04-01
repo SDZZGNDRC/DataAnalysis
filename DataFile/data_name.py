@@ -46,9 +46,14 @@ class DataName:
             [(d.start_timestamp, d.end_timestamp) for d in data_names]
         )
         
+        # make sure all data names have the same suffix
+        suffix = data_names[0].suffix
+        if not all(d.suffix == suffix for d in data_names):
+            raise ValueError("All data names must have the same suffix")
+        
         # 检查相邻区间是否重叠
         for i in range(len(sorted_intervals) - 1):
-            if sorted_intervals[i][1] >= sorted_intervals[i + 1][0]:
+            if sorted_intervals[i][1] > sorted_intervals[i + 1][0]:
                 return True
                 
         return False
@@ -70,13 +75,21 @@ class DataName:
                 raise ValueError(f"Invalid data name: {name}, suffix must be {suffix}")
         self.id = "-".join(self.splitted_name[2:-2])
         self.prefix = "-".join(self.splitted_name[:-2])
-        
+        self.suffix = self.splitted_name[-1].split(".")[1]
 
-    def overlap(self, other):
-        return not (
-            self.start_timestamp > other.end_timestamp or
-            self.end_timestamp < other.start_timestamp
-        )
+    def overlap(self, other, check_suffix: bool = True):
+        if check_suffix:
+            if self.suffix != other.suffix:
+                raise ValueError(f"Data name {self.name} and {other.name} must have the same suffix")
+            return not (
+                self.start_timestamp > other.end_timestamp or
+                self.end_timestamp < other.start_timestamp
+            )
+        else:
+            return not (
+                self.start_timestamp > other.end_timestamp or
+                self.end_timestamp < other.start_timestamp
+            )
 
     def __str__(self):
         return self.name
