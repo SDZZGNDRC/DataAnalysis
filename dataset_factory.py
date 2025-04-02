@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from pybacktest.src.bookcore import BookCore
+from pybacktest.bookcore import BookCore
 import pandas as pd
 from typing import Literal
 

@@ -6,8 +6,8 @@ import sys
 from typing import List, Tuple
 
 from matplotlib import pyplot as plt
-from pybacktest.src.simTime import SimTime
-from pybacktest.src.books import Book
+from pybacktest.simTime import SimTime
+from pybacktest.books import Book
 
 import numpy as np
 

@@ -4,9 +4,9 @@ import pandas as pd
 import numpy as np
 from copy import deepcopy
 
-from pybacktest.src.books import Book
-from pybacktest.src.bookcore import BookCore
-from pybacktest.src.simTime import SimTime
+from pybacktest.books import Book
+from pybacktest.bookcore import BookCore
+from pybacktest.simTime import SimTime
 
 
 class TV:

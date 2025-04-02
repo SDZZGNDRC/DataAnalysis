@@ -3,9 +3,9 @@ from typing import Dict, Literal, Optional
 import pandas as pd
 from copy import deepcopy
 
-from pybacktest.src.books import Book
-from pybacktest.src.bookcore import BookCore
-from pybacktest.src.simTime import SimTime
+from pybacktest.books import Book
+from pybacktest.bookcore import BookCore
+from pybacktest.simTime import SimTime
 
 
 class TA:

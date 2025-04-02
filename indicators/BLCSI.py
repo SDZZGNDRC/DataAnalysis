@@ -2,9 +2,9 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Literal, Optional
 import pandas as pd
 
-from pybacktest.src.books import Book
-from pybacktest.src.bookcore import BookCore
-from pybacktest.src.simTime import SimTime
+from pybacktest.books import Book
+from pybacktest.bookcore import BookCore
+from pybacktest.simTime import SimTime
 
 class BLCSI:
     def __init__(
