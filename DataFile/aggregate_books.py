@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
+from typing import List, Dict, Any
+import sys
 
-from schema.Books import books_schema
+from schema.schema import get_schema
 
 def aggregate_books(paths: list[Path], output_path: Path) -> None:
     '''
@@ -13,6 +15,13 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     
     Given a list of data files, this function will aggregate them into a single file.
     * The output json file's schema is defined in `schema/Books.py`, and is the same as the schema of the input data files.
+    
+    1. Check for timestamp ordering and uniqueness within each file
+    2. Check for non-overlapping timestamp ranges between files
+    3. Merge all data items and sort by timestamp
+    4. Set the merged elapsedTime to the min/max of all input elapsedTimes
+    5. Ensure all files have identical arg values
+    6. Validate the output against the schema
     '''
     # 1. Validate input paths
     for path in paths:
@@ -46,72 +55,131 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
     # 4. Read and validate input files
-    start_times = []
-    end_times = []
-    all_data = []
+    file_data_list = []
     
     for path in paths:
         try:
             with open(path, 'r') as f:
                 file_data = json.load(f)
             
-            validate(instance=file_data, schema=books_schema)
-            
-            start_times.append(file_data["elapsedTime"][0])
-            end_times.append(file_data["elapsedTime"][1])
-            
-            all_data.extend(file_data["data"])
-        except (json.JSONDecodeError, ValidationError, KeyError, IndexError) as e:
+            validate(instance=file_data, schema=get_schema("Books"))
+            file_data_list.append(file_data)
+        except (json.JSONDecodeError, ValidationError) as e:
             raise ValueError(f"Invalid file {path}: {e}")
 
-    # 5. Check consistency of 'action' and 'arg' across all data items
-    if all_data:
-        first_action = all_data[0]["action"]
-        first_arg = all_data[0]["arg"]
+    # 5. Extract and validate data from all files
+    all_root_data = []
+    elapsed_times = []
+    first_arg = None
+    
+    for i, root in enumerate(file_data_list):
+        # Extract elapsedTime
+        # FIXME: 这里可以跳过，因为前面已经进行了validate
+        if "elapsedTime" not in root or not isinstance(root["elapsedTime"], list) or len(root["elapsedTime"]) != 2:
+            raise ValueError(f"Invalid elapsedTime in file {paths[i]}")
         
-        for item in all_data[1:]:
-            if item["action"] != first_action:
-                raise ValueError(f"Action mismatch: Expected '{first_action}', found '{item['action']}'")
+        elapsed_times.append(root["elapsedTime"])
+        
+        # Extract and validate data items
+        # FIXME: 这里可以跳过，因为前面已经进行了validate
+        if "data" not in root or not isinstance(root["data"], list):
+            raise ValueError(f"Invalid data structure in file {paths[i]}")
+        
+        # Check arg consistency within this file and across all files
+        for item in root["data"]:
+            # FIXME: 这里可以跳过，因为前面已经进行了validate
+            if "arg" not in item or "action" not in item:
+                raise ValueError(f"Missing arg or action in data item in file {paths[i]}")
             
-            current_arg = item["arg"]
-            if current_arg.keys() != first_arg.keys():
-                raise ValueError(f"Arg keys mismatch: Expected {first_arg.keys()}, found {current_arg.keys()}")
+            if first_arg is None:
+                first_arg = item["arg"]
+            else:
+                # Check if current arg matches first_arg
+                if item["arg"].keys() != first_arg.keys():
+                    raise ValueError(f"Arg keys mismatch in file {paths[i]}")
+                
+                for key in first_arg:
+                    if item["arg"][key] != first_arg[key]:
+                        raise ValueError(f"Arg value mismatch for '{key}' in file {paths[i]}")
+        
+        # Process data items and validate timestamps
+        ts_values = []
+        processed_data_items = []
+        
+        for item in root["data"]:
+            # FIXME: 这里可以跳过，因为前面已经进行了validate
+            if "data" not in item or not isinstance(item["data"], dict) or "ts" not in item["data"]:
+                raise ValueError(f"Invalid data item structure or missing ts in file {paths[i]}")
             
-            for key in first_arg:
-                if current_arg[key] != first_arg[key]:
-                    raise ValueError(f"Arg value mismatch for '{key}': Expected '{first_arg[key]}', found '{current_arg[key]}'")
-
-    # 6. Merge and sort data entries by 'ts'
-    merged_entries = []
-    for item in all_data:
-        merged_entries.extend(item["data"])
-
-    # Sort by 'ts' (numeric comparison)
-    try:
-        merged_entries.sort(key=lambda x: int(x["ts"]))
-    except KeyError:
-        raise ValueError("Missing 'ts' field in data entry")
+            ts = item["data"]["ts"]
+            ts_int = int(ts)
+            ts_values.append(ts_int)
+            
+            processed_data_items.append({
+                "ts_int": ts_int,
+                "item": item
+            })
+        
+        # Check for duplicate timestamps within this file
+        if len(ts_values) != len(set(ts_values)):
+            print(f"Error: Duplicate timestamps detected in file {paths[i]}")
+            sys.exit(1)
+        
+        # Check if timestamps are sorted in ascending order
+        if ts_values != sorted(ts_values):
+            print(f"Error: Timestamps not in ascending order in file {paths[i]}")
+            sys.exit(1)
+        
+        # Store processed data with file index for later range checking
+        all_root_data.append({
+            "file_index": i,
+            "min_ts": min(ts_values) if ts_values else None,
+            "max_ts": max(ts_values) if ts_values else None,
+            "items": processed_data_items
+        })
     
-    # Check for duplicate 'ts'
-    seen_ts = set()
-    for entry in merged_entries:
-        ts = entry["ts"]
-        if ts in seen_ts:
-            raise ValueError(f"Duplicate timestamp detected: {ts}")
-        seen_ts.add(ts)
-
-    # 7. Build aggregated data structure
-    aggregated_data = {
-        "elapsedTime": [min(start_times), max(end_times)],
-        "data": [{
-            "arg": all_data[0]["arg"] if all_data else {},
-            "action": all_data[0]["action"] if all_data else "",
-            "data": merged_entries
-        }]
+    # 6. Check for timestamp range overlaps between files
+    # Sort roots by min_ts
+    all_root_data.sort(key=lambda x: x["min_ts"] if x["min_ts"] is not None else float('-inf'))
+    
+    # Check for overlaps
+    for i in range(1, len(all_root_data)):
+        prev_max = all_root_data[i-1]["max_ts"]
+        curr_min = all_root_data[i]["min_ts"]
+        
+        if prev_max is not None and curr_min is not None and prev_max >= curr_min:
+            prev_file = paths[all_root_data[i-1]["file_index"]]
+            curr_file = paths[all_root_data[i]["file_index"]]
+            print(f"Error: Timestamp range overlap detected between files {prev_file} and {curr_file}")
+            print(f"File {prev_file} has max_ts={prev_max}, File {curr_file} has min_ts={curr_min}")
+            sys.exit(1)
+    
+    # 7. Merge all data items and sort by timestamp
+    merged_data_items = []
+    for root_data in all_root_data:
+        merged_data_items.extend(root_data["items"])
+    
+    # Sort all items by timestamp
+    merged_data_items.sort(key=lambda x: x["ts_int"])
+    
+    # 8. Build the final merged structure
+    min_elapsed_time = min([et[0] for et in elapsed_times])
+    max_elapsed_time = max([et[1] for et in elapsed_times])
+    
+    merged_root = {
+        "elapsedTime": [min_elapsed_time, max_elapsed_time],
+        "data": [item["item"] for item in merged_data_items]
     }
-
-    # 8. Validate and write output
-    validate(instance=aggregated_data, schema=books_schema)
     
+    # 9. Validate the merged data against the schema
+    try:
+        validate(instance=merged_root, schema=get_schema("Books"))
+    except ValidationError as e:
+        print(f"Error: Merged data does not conform to the schema: {e}")
+        sys.exit(1)
+    
+    # 10. Write the merged data to the output file
     with open(output_path, 'w') as f:
-        json.dump(aggregated_data, f)
+        json.dump(merged_root,f, indent=4)
+    
+    print(f"Successfully merged {len(paths)} files into {output_path}")
