@@ -1,0 +1,104 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["elapsedTime", "data"],
+    "additionalProperties": false,
+    "properties": {
+        "elapsedTime": {
+            "type": "array",
+            "description": "The earliest and latest timestamp of the data",
+            "items": {
+                "type": "integer",
+                "description": "Unix-millisecond timestamp, from 2001-01-01 00:00:00 to 2099-01-01 00:00:00",
+                "minimum": 978278400000,
+                "maximum": 4070880000000
+            },
+            "minItems": 2,
+            "maxItems": 2
+        },
+        "data": {
+            "type": "array",
+            "description": "The data of the opt summary",
+            "items": {
+                "type": "object",
+                "required": ["arg", "data"],
+                "additionalProperties": false,
+                "properties": {
+                    "arg": {
+                        "type": "object",
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "instId": {"type": "string"},
+                            "instType": {"type": "string"},
+                            "InstFamily": {"type": "string"},
+                            "uly": {"type": "string"}
+                        },
+                        "required": ["channel"],
+                        "additionalProperties": false
+                    },
+                    "data": {
+                        "type": "array",
+                        "description": "Array of status events",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "begin": {
+                                    "type": "string",
+                                    "description": "Start time of the event"
+                                },
+                                "end": {
+                                    "type": "string",
+                                    "description": "End time of the event"
+                                },
+                                "href": {
+                                    "type": "string",
+                                    "description": "Reference link for the event"
+                                },
+                                "preOpenBegin": {
+                                    "type": "string",
+                                    "description": "Pre-open start time"
+                                },
+                                "scheDesc": {
+                                    "type": "string",
+                                    "description": "Schedule description"
+                                },
+                                "serviceType": {
+                                    "type": "string",
+                                    "description": "Type of service affected"
+                                },
+                                "state": {
+                                    "type": "string",
+                                    "description": "Current state of the service"
+                                },
+                                "system": {
+                                    "type": "string",
+                                    "description": "Affected system name"
+                                },
+                                "maintType": {
+                                    "type": "string",
+                                    "description": "Type of maintenance"
+                                },
+                                "env": {
+                                    "type": "string",
+                                    "description": "Environment affected"
+                                },
+                                "title": {
+                                    "type": "string",
+                                    "description": "Event title"
+                                },
+                                "ts": {
+                                    "type": "string",
+                                    "description": "Timestamp of status update",
+                                    "pattern": "^\\d+$"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+

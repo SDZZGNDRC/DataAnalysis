@@ -1,0 +1,93 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["elapsedTime", "data"],
+    "additionalProperties": false,
+    "properties": {
+        "elapsedTime": {
+            "type": "array",
+            "description": "The earliest and latest timestamp of the data",
+            "items": {
+                "type": "integer",
+                "description": "Unix-millisecond timestamp, from 2001-01-01 00:00:00 to 2099-01-01 00:00:00",
+                "minimum": 978278400000,
+                "maximum": 4070880000000
+            },
+            "minItems": 2,
+            "maxItems": 2
+        },
+        "data": {
+            "type": "array",
+            "description": "The data of the opt summary",
+            "items": {
+                "type": "object",
+                "required": ["arg", "data"],
+                "additionalProperties": false,
+                "properties": {
+                    "arg": {
+                        "type": "object",
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "instId": {"type": "string"},
+                            "instType": {"type": "string"},
+                            "InstFamily": {"type": "string"},
+                            "uly": {"type": "string"}
+                        },
+                        "required": ["channel"],
+                        "additionalProperties": false
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "instType",
+                                "instId", 
+                                "uly",
+                                "delta",
+                                "gamma",
+                                "theta",
+                                "vega",
+                                "deltaBS",
+                                "gammaBS",
+                                "thetaBS",
+                                "vegaBS",
+                                "realVol",
+                                "bidVol",
+                                "askVol",
+                                "markVol",
+                                "lever",
+                                "fwdPx",
+                                "ts"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                                "instType": {"type": "string"},
+                                "instId": {"type": "string"},
+                                "uly": {"type": "string"},
+                                "delta": {"type": "string"},
+                                "gamma": {"type": "string"},
+                                "theta": {"type": "string"},
+                                "vega": {"type": "string"},
+                                "deltaBS": {"type": "string"},
+                                "gammaBS": {"type": "string"},
+                                "thetaBS": {"type": "string"},
+                                "vegaBS": {"type": "string"},
+                                "realVol": {"type": "string"},
+                                "bidVol": {"type": "string"},
+                                "askVol": {"type": "string"},
+                                "markVol": {"type": "string"},
+                                "lever": {"type": "string"},
+                                "fwdPx": {"type": "string"},
+                                "ts": {
+                                    "type": "string",
+                                    "pattern": "^\\d+$"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

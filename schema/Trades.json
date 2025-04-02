@@ -1,0 +1,62 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["elapsedTime", "data"],
+    "additionalProperties": false,
+    "properties": {
+        "elapsedTime": {
+            "type": "array",
+            "description": "The earliest and latest timestamp of the data",
+            "items": {
+                "type": "integer",
+                "description": "Unix-millisecond timestamp, from 2001-01-01 00:00:00 to 2099-01-01 00:00:00",
+                "minimum": 978278400000,
+                "maximum": 4070880000000
+            },
+            "minItems": 2,
+            "maxItems": 2
+        },
+        "data": {
+            "type": "array",
+            "description": "The data of the trades",
+            "items": {
+                "type": "object",
+                "required": ["arg", "data"],
+                "additionalProperties": false,
+                "properties": {
+                    "arg": {
+                        "type": "object",
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "instId": {"type": "string"},
+                            "instType": {"type": "string"},
+                            "InstFamily": {"type": "string"},
+                            "uly": {"type": "string"}
+                        },
+                        "required": ["channel"],
+                        "additionalProperties": false
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["instId", "tradeId", "px", "sz", "side", "ts"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "instId": {"type": "string"},
+                                "tradeId": {"type": "string"},
+                                "px": {"type": "string"},
+                                "sz": {"type": "string"},
+                                "side": {"type": "string"},
+                                "ts": {
+                                    "type": "string",
+                                    "pattern": "^\\d+$"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,72 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["elapsedTime", "data"],
+    "additionalProperties": false,
+    "properties": {
+        "elapsedTime": {
+            "type": "array",
+            "description": "The earliest and latest timestamp of the data",
+            "items": {
+                "type": "integer",
+                "description": "Unix-millisecond timestamp, from 2001-01-01 00:00:00 to 2099-01-01 00:00:00",
+                "minimum": 978278400000,
+                "maximum": 4070880000000
+            },
+            "minItems": 2,
+            "maxItems": 2
+        },
+        "data": {
+            "type": "array",
+            "description": "The data of the tickers",
+            "items": {
+                "type": "object",
+                "required": ["arg", "data"],
+                "additionalProperties": false,
+                "properties": {
+                    "arg": {
+                        "type": "object",
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "instId": {"type": "string"},
+                            "instType": {"type": "string"},
+                            "InstFamily": {"type": "string"},
+                            "uly": {"type": "string"}
+                        },
+                        "required": ["channel"],
+                        "additionalProperties": false
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["instType", "instId", "last", "lastSz", "askPx", "askSz", "bidPx", "bidSz", "open24h", "high24h", "low24h", "volCcy24h", "vol24h", "sodUtc0", "sodUtc8", "ts"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "instType": {"type": "string"},
+                                "instId": {"type": "string"},
+                                "last": {"type": "string"},
+                                "lastSz": {"type": "string"},
+                                "askPx": {"type": "string"},
+                                "askSz": {"type": "string"},
+                                "bidPx": {"type": "string"},
+                                "bidSz": {"type": "string"},
+                                "open24h": {"type": "string"},
+                                "high24h": {"type": "string"},
+                                "low24h": {"type": "string"},
+                                "volCcy24h": {"type": "string"},
+                                "vol24h": {"type": "string"},
+                                "sodUtc0": {"type": "string"},
+                                "sodUtc8": {"type": "string"},
+                                "ts": {
+                                    "type": "string",
+                                    "pattern": "^\\d+$"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
