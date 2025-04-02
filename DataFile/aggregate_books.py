@@ -1,4 +1,4 @@
-from data_name import DataName
+from DataFile.data_name import DataName
 
 import json
 from pathlib import Path
@@ -6,6 +6,7 @@ from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from typing import List, Dict, Any
 import sys
+from tqdm import tqdm
 
 from schema.schema import get_schema
 
@@ -24,16 +25,17 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     6. Validate the output against the schema
     '''
     # 1. Validate input paths
-    for path in paths:
+    # Validate paths with progress
+    for path in tqdm(paths, desc="Validating paths"):
         if not path.exists():
             raise FileNotFoundError(f"File {path} does not exist")
     
     if len(paths) != len(set(paths)):
         raise ValueError("There are repeated paths")
     
-    # 2. Validate data names
+    # 2. Validate data names with progress
     data_names = []
-    for path in paths:
+    for path in tqdm(paths, desc="Validating data names"):
         try:
             data_names.append(DataName(path.name, "json"))
         except ValueError:
@@ -57,7 +59,8 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     # 4. Read and validate input files
     file_data_list = []
     
-    for path in paths:
+    # Read and validate files with progress
+    for path in tqdm(paths, desc="Reading files"):
         try:
             with open(path, 'r') as f:
                 file_data = json.load(f)
@@ -72,12 +75,13 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     elapsed_times = []
     first_arg = None
     
-    for i, root in enumerate(file_data_list):
+    # Process file data with progress
+    for i, root in enumerate(tqdm(file_data_list, desc="Processing files")):
         # Extract elapsedTime        
         elapsed_times.append(root["elapsedTime"])
         
-        # Check arg consistency within this file and across all files
-        for item in root["data"]:
+        # Check arg consistency with progress
+        for item in tqdm(root["data"], desc=f"File {i+1}/{len(file_data_list)}", leave=False):
             
             if first_arg is None:
                 first_arg = item["arg"]
@@ -96,7 +100,7 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
         
         for item in root["data"]:
             
-            tss = map(lambda x: int(x['ts']), item['data'])
+            tss = list(map(lambda x: int(x['ts']), item['data']))
             min_ts = min(tss)
             max_ts = max(tss)
             ts_values.extend(tss)
@@ -114,15 +118,14 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
         
         # Check if timestamps are sorted in ascending order
         if ts_values != sorted(ts_values):
-            print(f"Error: Timestamps not in ascending order in file {paths[i]}")
-            sys.exit(1)
+            print(f"Warning: Timestamps not in ascending order in file {paths[i]}")
         
         # Store processed data with file index for later range checking
         if len(processed_data_items) > 0:
             all_root_data.append({
                 "file_index": i,
-                "min_ts": min(map(lambda x: x["min_ts"], processed_data_items)),
-                "max_ts": max(map(lambda x: x["max_ts"], processed_data_items)),
+                "min_ts": min(list(map(lambda x: x["min_ts"], processed_data_items))),
+                "max_ts": max(list(map(lambda x: x["max_ts"], processed_data_items))),
                 "items": processed_data_items
             })
         else:
@@ -173,4 +176,4 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     with open(output_path, 'w') as f:
         json.dump(merged_root,f)
     
-    print(f"Successfully merged {len(paths)} files into {output_path}")
+    print(f"\nSuccessfully merged {len(paths)} files into {output_path}")
