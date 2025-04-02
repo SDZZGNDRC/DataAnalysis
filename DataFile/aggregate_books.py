@@ -73,23 +73,11 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     first_arg = None
     
     for i, root in enumerate(file_data_list):
-        # Extract elapsedTime
-        # FIXME: 这里可以跳过，因为前面已经进行了validate
-        if "elapsedTime" not in root or not isinstance(root["elapsedTime"], list) or len(root["elapsedTime"]) != 2:
-            raise ValueError(f"Invalid elapsedTime in file {paths[i]}")
-        
+        # Extract elapsedTime        
         elapsed_times.append(root["elapsedTime"])
-        
-        # Extract and validate data items
-        # FIXME: 这里可以跳过，因为前面已经进行了validate
-        if "data" not in root or not isinstance(root["data"], list):
-            raise ValueError(f"Invalid data structure in file {paths[i]}")
         
         # Check arg consistency within this file and across all files
         for item in root["data"]:
-            # FIXME: 这里可以跳过，因为前面已经进行了validate
-            if "arg" not in item or "action" not in item:
-                raise ValueError(f"Missing arg or action in data item in file {paths[i]}")
             
             if first_arg is None:
                 first_arg = item["arg"]
@@ -107,16 +95,15 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
         processed_data_items = []
         
         for item in root["data"]:
-            # FIXME: 这里可以跳过，因为前面已经进行了validate
-            if "data" not in item or not isinstance(item["data"], dict) or "ts" not in item["data"]:
-                raise ValueError(f"Invalid data item structure or missing ts in file {paths[i]}")
             
-            ts = item["data"]["ts"]
-            ts_int = int(ts)
-            ts_values.append(ts_int)
+            tss = map(lambda x: int(x['ts']), item['data'])
+            min_ts = min(tss)
+            max_ts = max(tss)
+            ts_values.extend(tss)
             
             processed_data_items.append({
-                "ts_int": ts_int,
+                "min_ts": min_ts,
+                "max_ts": max_ts,
                 "item": item
             })
         
@@ -131,28 +118,32 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
             sys.exit(1)
         
         # Store processed data with file index for later range checking
-        all_root_data.append({
-            "file_index": i,
-            "min_ts": min(ts_values) if ts_values else None,
-            "max_ts": max(ts_values) if ts_values else None,
-            "items": processed_data_items
-        })
+        if len(processed_data_items) > 0:
+            all_root_data.append({
+                "file_index": i,
+                "min_ts": min(map(lambda x: x["min_ts"], processed_data_items)),
+                "max_ts": max(map(lambda x: x["max_ts"], processed_data_items)),
+                "items": processed_data_items
+            })
+        else:
+            print(f"Warning: No data items found in file {paths[i]}")
     
     # 6. Check for timestamp range overlaps between files
     # Sort roots by min_ts
     all_root_data.sort(key=lambda x: x["min_ts"] if x["min_ts"] is not None else float('-inf'))
     
     # Check for overlaps
-    for i in range(1, len(all_root_data)):
-        prev_max = all_root_data[i-1]["max_ts"]
-        curr_min = all_root_data[i]["min_ts"]
-        
-        if prev_max is not None and curr_min is not None and prev_max >= curr_min:
-            prev_file = paths[all_root_data[i-1]["file_index"]]
-            curr_file = paths[all_root_data[i]["file_index"]]
-            print(f"Error: Timestamp range overlap detected between files {prev_file} and {curr_file}")
-            print(f"File {prev_file} has max_ts={prev_max}, File {curr_file} has min_ts={curr_min}")
-            sys.exit(1)
+    if len(all_root_data) > 1:
+        for i in range(1, len(all_root_data)):
+            prev_max = all_root_data[i-1]["max_ts"]
+            curr_min = all_root_data[i]["min_ts"]
+            
+            if prev_max is not None and curr_min is not None and prev_max >= curr_min:
+                prev_file = paths[all_root_data[i-1]["file_index"]]
+                curr_file = paths[all_root_data[i]["file_index"]]
+                print(f"Error: Timestamp range overlap detected between files {prev_file} and {curr_file}")
+                print(f"File {prev_file} has max_ts={prev_max}, File {curr_file} has min_ts={curr_min}")
+                sys.exit(1)
     
     # 7. Merge all data items and sort by timestamp
     merged_data_items = []
@@ -160,7 +151,7 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
         merged_data_items.extend(root_data["items"])
     
     # Sort all items by timestamp
-    merged_data_items.sort(key=lambda x: x["ts_int"])
+    merged_data_items.sort(key=lambda x: x["min_ts"])
     
     # 8. Build the final merged structure
     min_elapsed_time = min([et[0] for et in elapsed_times])
@@ -180,6 +171,6 @@ def aggregate_books(paths: list[Path], output_path: Path) -> None:
     
     # 10. Write the merged data to the output file
     with open(output_path, 'w') as f:
-        json.dump(merged_root,f, indent=4)
+        json.dump(merged_root,f)
     
     print(f"Successfully merged {len(paths)} files into {output_path}")
