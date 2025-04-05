@@ -7,6 +7,7 @@ import sys
 
 
 def parse_dataFileName(fileBaseName: str) -> dict:
+    # FIXME: 使用 DataFile.data_name 代替
     # example: OKX-Books-1INCH-USD-SWAP-400-1689297329268-1689298999939.7z
     items = os.path.splitext(fileBaseName)[0].split('-')
     if len(items) < 6 or (not fileBaseName.startswith('OKX-Books')):
