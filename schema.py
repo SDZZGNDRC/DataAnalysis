@@ -22,7 +22,7 @@ def get_schema(schema_name: str, use_cache: bool = True) -> Dict[str, Any]:
     """
     if use_cache and schema_name in _schema_cache:
         return _schema_cache[schema_name]
-    schema_path = os.path.join(os.path.dirname(__file__), "jsonschema", f"{schema_name}.json")
+    schema_path = os.path.join(os.path.dirname(__file__), "DataSchema", "schema", "jsonschema", f"{schema_name}.json")
     if not os.path.exists(schema_path):
         raise FileNotFoundError(f"Schema file not found: {schema_path}")
         

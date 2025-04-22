@@ -58,6 +58,57 @@ class DataName:
                 
         return False
 
+    @staticmethod
+    def group_overlapped(data_names: list['DataName']) -> list[list['DataName']]:
+        """Group data names where overlaps are transitive.
+        
+        Args:
+            data_names: List of DataName objects to group
+            
+        Returns:
+            List of lists where each inner list contains DataNames that overlap transitively
+            
+        Raises:
+            ValueError: If data names have different suffixes
+        """
+        if not data_names:
+            return []
+            
+        # Validate all have same suffix
+        suffix = data_names[0].suffix
+        if not all(d.suffix == suffix for d in data_names):
+            raise ValueError("All data names must have the same suffix")
+            
+        # Build adjacency list
+        adj = {d: [] for d in data_names}
+        for i, d1 in enumerate(data_names):
+            for d2 in data_names[i+1:]:
+                if d1.overlap(d2, check_suffix=False):
+                    adj[d1].append(d2)
+                    adj[d2].append(d1)
+                    
+        # Find connected components using DFS
+        visited = set()
+        groups = []
+        
+        for d in data_names:
+            if d not in visited:
+                stack = [d]
+                visited.add(d)
+                group = []
+                
+                while stack:
+                    current = stack.pop()
+                    group.append(current)
+                    for neighbor in adj[current]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            stack.append(neighbor)
+                            
+                groups.append(group)
+                
+        return groups
+
     def __init__(self, name, suffix: str = ""):
         if not DataName.validate_name(name):
             raise ValueError(f"Invalid data name: {name}")
@@ -108,4 +159,3 @@ class DataName:
     
     def __contains__(self, item):
         return item in self.name
-    

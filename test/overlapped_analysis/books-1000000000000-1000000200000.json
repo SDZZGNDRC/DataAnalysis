@@ -1,0 +1,24 @@
+{
+    "elapsedTime": [1000000000000, 1000000200000],
+    "data": [
+        {
+            "arg": {"channel": "books"},
+            "data": [{"asks": [], "bids": [], "ts": "1000000000000", "checksum": 0, "prevSeqId": 0, "seqId": 0}],
+            "action": "snapshot"
+        },
+        {
+            "arg": {"channel": "books"},
+            "data": [{"asks": [], "bids": [], "ts": "1000000100000", "checksum": 0, "prevSeqId": 0, "seqId": 0}],
+            "action": "update"
+        },
+        {
+            "arg": {"channel": "books"},
+            "data": [{"asks": [], "bids": [], "ts": "1000000200000", "checksum": 0, "prevSeqId": 0, "seqId": 0}],
+            "action": "update"
+        }
+    ],
+    "extend": {
+        "sorted": true,
+        "true_elapsedTime": true
+    }
+}
