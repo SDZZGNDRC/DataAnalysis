@@ -22,6 +22,9 @@ import argparse
 import time
 from tqdm import tqdm
 
+import DataFile
+import DataFile.data_name
+
 # Compile the regex pattern for filename matching at the module level
 FILENAME_PATTERN = re.compile(r'^(.*)-(\d+)-(\d+)\.json$')
 
@@ -40,55 +43,41 @@ def analyze_file(file_path, sort_data):
     """
     original_file_name = os.path.basename(file_path)
     try:
-        # Use the pre-compiled pattern
-        match = FILENAME_PATTERN.match(original_file_name)
-        if not match:
-            tqdm.write(f"Warning: Skipping file with invalid name format: {original_file_name}")
+        try: 
+            dataName = DataFile.data_name.DataName(file_path)
+        except Exception as e:
+            tqdm.write(f"Parsing {file_path} error: {e}")
             return None
-        file_prefix = match.group(1)
+        file_prefix = dataName.prefix
+        
+        if dataName.category == 'LiquidationOrders':
+            raise Exception(f"Not support `LiquidationOrders` now")
 
         with open(file_path, 'rb') as f: # Changed mode to 'rb' for orjson
-            data = orjson.loads(f.read()) # Changed json.load to orjson.loads
+            root = orjson.loads(f.read()) # Changed json.load to orjson.loads
 
-        if 'data' not in data or not isinstance(data['data'], list) or not data['data']:
+        if 'data' not in root or not isinstance(root['data'], list) or not root['data']:
+            # TODO: do some word here.
             tqdm.write(f"Warning: Skipping file with missing or empty 'data' list: {original_file_name}")
             return None
 
-        ts_list_int = []
-        valid_data_items = []
-        for item_index, d in enumerate(data['data']):
-            try:
-                if isinstance(d.get('data'), list) and len(d['data']) == 1 and 'ts' in d['data'][0]:
-                    ts_str = d['data'][0]['ts']
-                    if isinstance(ts_str, str) and ts_str.isdigit():
-                        ts_int = int(ts_str)
-                        ts_list_int.append(ts_int)
-                        valid_data_items.append(d)
-                    else:
-                        tqdm.write(f"Warning: Invalid 'ts' format in item {item_index} within {original_file_name}")
-                else:
-                    tqdm.write(f"Warning: Invalid structure in item {item_index} within {original_file_name}")
-            except Exception as e:
-                tqdm.write(f"Warning: Error in item {item_index} within {original_file_name}: {e}")
+        if sort_data:
+            # 使 Decorate-Sort-Undecorate 模式提高排序性能
+            decorated = [(int(item['data'][0]['ts']), item) for item in root['data']]
+            decorated.sort()
+            root['data'] = [item for _, item in decorated]
+            min_ts = root['data'][0]
+            max_ts = root['data'][-1]
+        else: 
+            t = sorted(root['data'], key=lambda item: int(item['data'][0]['ts']))
+            min_ts = t[0]
+            max_ts = t[-1]
 
-        if not ts_list_int:
-            tqdm.write(f"Warning: No valid 'ts' values found in {original_file_name}")
-            return None
+        root['elapsedTime'] = [min_ts, max_ts]
+        root.setdefault('extend', {})['true_elapsedTime'] = True
+        root['extend']['sorted'] = sort_data
 
-        min_ts = min(ts_list_int)
-        max_ts = max(ts_list_int)
-
-        updated_data = data.copy()
-        updated_data['data'] = valid_data_items
-
-        if sort_data and updated_data['data']:
-            updated_data['data'].sort(key=lambda item: int(item['data'][0]['ts']))
-
-        updated_data['elapsedTime'] = [min_ts, max_ts]
-        updated_data.setdefault('extend', {})['true_elapsedTime'] = True
-        updated_data['extend']['sorted'] = sort_data and bool(updated_data['data'])
-
-        return (file_path, original_file_name, file_prefix, min_ts, max_ts, updated_data)
+        return (file_path, original_file_name, file_prefix, min_ts, max_ts, root)
 
     except orjson.JSONDecodeError as e: # Changed to orjson.JSONDecodeError
         tqdm.write(f"Error decoding JSON for {file_path}: {e}")
