@@ -44,7 +44,7 @@ def analyze_file(file_path, sort_data):
     original_file_name = os.path.basename(file_path)
     try:
         try: 
-            dataName = DataFile.data_name.DataName(file_path)
+            dataName = DataFile.data_name.DataName(original_file_name)
         except Exception as e:
             tqdm.write(f"Parsing {file_path} error: {e}")
             return None
@@ -66,12 +66,12 @@ def analyze_file(file_path, sort_data):
             decorated = [(int(item['data'][0]['ts']), item) for item in root['data']]
             decorated.sort()
             root['data'] = [item for _, item in decorated]
-            min_ts = root['data'][0]
-            max_ts = root['data'][-1]
+            min_ts = root['data'][0]['data'][0]['ts']
+            max_ts = root['data'][-1]['data'][0]['ts']
         else: 
             t = sorted(root['data'], key=lambda item: int(item['data'][0]['ts']))
-            min_ts = t[0]
-            max_ts = t[-1]
+            min_ts = t[0]['data'][0]['ts']
+            max_ts = t[-1]['data'][0]['ts']
 
         root['elapsedTime'] = [min_ts, max_ts]
         root.setdefault('extend', {})['true_elapsedTime'] = True
