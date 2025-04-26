@@ -43,7 +43,7 @@ def analyze_file(file_path, sort_data):
     """
     original_file_name = os.path.basename(file_path)
     try:
-        try: 
+        try:
             dataName = DataFile.data_name.DataName(original_file_name)
         except Exception as e:
             tqdm.write(f"Parsing {file_path} error: {e}")
@@ -55,6 +55,11 @@ def analyze_file(file_path, sort_data):
 
         with open(file_path, 'rb') as f: # Changed mode to 'rb' for orjson
             root = orjson.loads(f.read()) # Changed json.load to orjson.loads
+
+        # Skip if already processed
+        if root.get('extend', {}).get('true_elapsedTime', False) and root.get('extend', {}).get('sorted', False):
+            tqdm.write(f"Skipping already processed file: {original_file_name}")
+            return None
 
         if 'data' not in root or not isinstance(root['data'], list) or not root['data']:
             # TODO: do some word here.
