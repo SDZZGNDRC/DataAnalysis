@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List
 import logging
 import time
+import heapq
 
 import orjson
 import pyarrow as pa
@@ -55,8 +56,8 @@ def aggregator(json_files: List[str], output_dir: str, overlapped_threshold: int
         if dp_ts(dp_buffer[-1]) < dp_ts(data_points[-1]): # Not overlapped, extend directly
             dp_buffer.extend(data_points)
         elif dp_ts(data_points[-1]) < dp_ts(dp_buffer[-1]): # overlapped
-            dp_buffer.extend(data_points)
-            dp_buffer.sort(key=dp_ts)
+            # Use heapq.merge for efficient merging of sorted lists
+            dp_buffer = list(heapq.merge(dp_buffer, data_points, key=dp_ts))
             logger.info(f'overlapped: {jf}')
         else: # equal? this should not exist
             raise Exception(f"some datapoint {data_points[-1]} in file {jf} is equal to the datapoint in the last file")
@@ -66,8 +67,8 @@ def aggregator(json_files: List[str], output_dir: str, overlapped_threshold: int
             start_ts = dp_ts(dp_buffer[0])
             end_ts = dp_ts(dp_buffer[chunk-1])
             parquet_file = f'{file_prefix}-{start_ts}-{end_ts}.parquet'
-            df = pd.DataFrame(dp_buffer[:chunk])
-            table = pa.Table.from_pandas(df)
+            # Directly create PyArrow Table from list of dicts, skipping Pandas
+            table = pa.Table.from_pylist(dp_buffer[:chunk])
             pq.write_table(table, Path(output_dir)/Path(parquet_file), compression='ZSTD', compression_level=5)
             logger.info(f'generated: {Path(output_dir)/Path(parquet_file)}')
             generated_counter += 1
@@ -79,8 +80,8 @@ def aggregator(json_files: List[str], output_dir: str, overlapped_threshold: int
         start_ts = dp_ts(dp_buffer[0])
         end_ts = dp_ts(dp_buffer[-1])
         parquet_file = f'{file_prefix}-{start_ts}-{end_ts}.parquet'
-        df = pd.DataFrame(dp_buffer)
-        table = pa.Table.from_pandas(df)
+        # Directly create PyArrow Table from list of dicts, skipping Pandas
+        table = pa.Table.from_pylist(dp_buffer)
         pq.write_table(table, Path(output_dir)/Path(parquet_file), compression='ZSTD', compression_level=5)
         logger.info(f'generated: {Path(output_dir)/Path(parquet_file)}')
         generated_counter += 1
