@@ -27,7 +27,13 @@ class DataName:
             return False
         
         # start timestamp must not bigger than end timestamp
-        if int(splitted_name[-2]) > int(splitted_name[-1].split(".")[0]):
+        start_ts = splitted_name[-2]
+        end_ts = splitted_name[-1].split(".")[0]
+        if len(start_ts) == 16:
+            start_ts = start_ts[:13]
+        if len(end_ts) == 16:
+            end_ts = end_ts[:13]
+        if int(start_ts) > int(end_ts):
             return False
         
         # at least 5 components; at most 8 components
