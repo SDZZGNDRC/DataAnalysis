@@ -6,14 +6,14 @@ category_map = {
     'EstimatedPrice': pattern1.map,
     'FundingRate': pattern1.map,
     'IndexTickers': pattern1.map,
-    'Liquidation': pattern2.map,
+    'LiquidationOrders': pattern2.map,
     'MarkPrice': pattern1.map,
     'OpenInterest': pattern1.map,
     'OptDeal': pattern1.map,
     'OptSummary': pattern1.map,
     'PriceLimit': pattern1.map,
     'Status': pattern1.map,
-    'Ticker': pattern1.map,
+    'Tickers': pattern1.map,
     'Trades': pattern1.map,
 }
 

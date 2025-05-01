@@ -2,8 +2,8 @@ class DataName:
     # example: OKX-Books-1INCH-USD-SWAP-400-1689297329268-1689298999939.7z
     @staticmethod
     def validate_name(name: str) -> bool:
-        # endswith `.7z` or `.json`
-        if not name.endswith('.7z') and not name.endswith('.json'):
+        # endswith `.7z` or `.json` or `.parquet`
+        if not (name.endswith('.7z') or name.endswith('.json') or name.endswith('.parquet')):
             return False
         
         # split by '-'
