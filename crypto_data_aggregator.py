@@ -128,7 +128,7 @@ def aggregator(json_files: List[str], output_dir: str, overlapped_threshold: int
             parquet_file = f'{file_prefix}-{start_ts}-{end_ts}.parquet'
             table = pa.Table.from_pylist(dp_buffer[:chunk])
             output_path = Path(output_dir)/Path(parquet_file)
-            pq.write_table(table, output_path, compression='ZSTD', compression_level=5)
+            pq.write_table(table, output_path, compression='ZSTD', compression_level=3)
             # logger.info(f'[{process_id}] generated: {output_path}')
             generated_counter += 1
             dp_buffer = dp_buffer[chunk:]
@@ -140,7 +140,7 @@ def aggregator(json_files: List[str], output_dir: str, overlapped_threshold: int
         parquet_file = f'{file_prefix}-{start_ts}-{end_ts}.parquet'
         table = pa.Table.from_pylist(dp_buffer)
         output_path = Path(output_dir)/Path(parquet_file)
-        pq.write_table(table, output_path, compression='ZSTD', compression_level=5)
+        pq.write_table(table, output_path, compression='ZSTD', compression_level=3)
         # logger.info(f'[{process_id}] generated: {output_path}')
         generated_counter += 1
     

@@ -24,14 +24,25 @@ def parse_arguments():
     )
     parser.add_argument(
         'output_dir',
-        help='Path to the directory where the extracted files will be saved'
+        nargs='?',
+        default=None,
+        help='Path to the directory where the extracted files will be saved (ignored if --overwrite is set)'
     )
     parser.add_argument(
         '--prefix',
         default="*",
         help='Prefix of the zip files to process (default: match all prefix)'
     )
-    return parser.parse_args()
+    parser.add_argument(
+        '--overwrite',
+        action='store_true',
+        help='If set, output_dir will be ignored, and extracted files will be placed in the same directory as the 7z file. The 7z file will be deleted after extraction.'
+    )
+    args = parser.parse_args()
+    # 检查参数合法性
+    if not args.overwrite and args.output_dir is None:
+        parser.error('the following arguments are required: output_dir (unless --overwrite is set)')
+    return args
 
 if __name__ == "__main__":
     # 解析命令行参数
@@ -39,24 +50,29 @@ if __name__ == "__main__":
     zipDir = args.input_dir
     destDir = args.output_dir
     file_prefix = args.prefix
+    overwrite = args.overwrite
 
     # 验证输入目录
     if not os.path.isdir(zipDir):
         print(f'Input directory does not exist: {zipDir}')
         exit(-1)
 
-    # 创建输出目录（如果不存在）
-    os.makedirs(destDir, exist_ok=True)
+    # 创建输出目录（如果不存在），仅在未指定 overwrite 时
+    if not overwrite and destDir is not None:
+        os.makedirs(destDir, exist_ok=True)
     
-    # 查找所有符合前缀的 .7z 文件
-    zip_pattern = os.path.join(zipDir, f'{file_prefix}-*-*.7z')
-    zipfiles = glob.glob(zip_pattern)
+    # 递归查找所有符合前缀的 .7z 文件（支持多级子目录）
+    zip_pattern = os.path.join(zipDir, '**', f'{file_prefix}*.7z')
+    zipfiles = glob.glob(zip_pattern, recursive=True)
     
     if not zipfiles:
-        print(f'Cannot find any zip files with prefix "{file_prefix}" under: {zipDir}')
-        exit(-1)
+        exit(0)
 
-    destfiles = [destDir] * len(zipfiles)
+    # 根据 overwrite 参数决定解压目标目录
+    if overwrite:
+        destfiles = [os.path.dirname(z) for z in zipfiles]
+    else:
+        destfiles = [destDir] * len(zipfiles)
     total_files = len(zipfiles)
 
     print(f'Found {total_files} files to process...')
@@ -79,6 +95,16 @@ if __name__ == "__main__":
             for _ in p.imap_unordered(unzip_7z, args_list):
                 pbar.update(1)
     
+    # 如果 overwrite，删除所有已处理的 7z 文件
+    if overwrite:
+        for z in zipfiles:
+            try:
+                os.remove(z)
+                # print(f"Deleted: {z}")
+            except Exception as e:
+                print(f"Failed to delete {z}: {e}")
+        print(f'Deleted {total_files} .7z files after extraction.')
+
     # 计算总时间和平均速度
     total_time = time.time() - start_time
     avg_speed = total_files / total_time if total_time > 0 else 0
