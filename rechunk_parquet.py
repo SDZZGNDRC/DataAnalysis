@@ -65,7 +65,7 @@ def rechunk_parquet(parquet_files: List[str], output_dir: str, chunk: int):
                 start_ts = current_table['ts'][start].as_py()
                 end_ts = current_table['ts'][start + chunk-1].as_py()
                 output_file = Path(output_dir) / Path(f'{prefix}-{start_ts}-{end_ts}.parquet')
-                pq.write_table(current_table.slice(start,chunk), output_file, compression='ZSTD', compression_level=3)
+                pq.write_table(current_table.slice(start,chunk), output_file, compression='ZSTD', compression_level=2)
                 start += chunk
                 remained_rows -= chunk
             
@@ -76,7 +76,7 @@ def rechunk_parquet(parquet_files: List[str], output_dir: str, chunk: int):
         start_ts = current_table['ts'][start].as_py()
         end_ts = current_table['ts'][-1].as_py()
         output_file = Path(output_dir) / Path(f'{prefix}-{start_ts}-{end_ts}.parquet')
-        pq.write_table(current_table, output_file, compression='ZSTD', compression_level=3)
+        pq.write_table(current_table, output_file, compression='ZSTD', compression_level=2)
     except Exception as e:
         logger.error(f"[{process_id}] str(e)")
     return len(parquet_files)
