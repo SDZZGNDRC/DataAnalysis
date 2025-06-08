@@ -11,8 +11,6 @@ from tqdm import tqdm
 # from pybacktest.bookcore import BookCore
 from cbookcore import BookCore
 
-import schema
-
 def update_metadata(new_metadata, p: Path):
     with open(p, 'w') as f:
         json.dump(new_metadata, f, indent=4)
