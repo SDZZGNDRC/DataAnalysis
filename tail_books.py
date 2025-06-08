@@ -8,7 +8,8 @@ import pyarrow as pa
 import pandas as pd
 from tqdm import tqdm
 
-from pybacktest.bookcore import BookCore
+# from pybacktest.bookcore import BookCore
+from cbookcore import BookCore
 
 import schema
 
