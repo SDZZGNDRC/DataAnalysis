@@ -2,42 +2,14 @@ import argparse
 from copy import deepcopy
 from typing import Tuple, List
 from pathlib import Path
-import gc
-import numpy as np
 import pyarrow.parquet as pq
 import pyarrow as pa
-import pandas as pd
 from tqdm import tqdm
 import multiprocessing
 import os
 
 # from pybacktest.bookcore import BookCore
-from cbookcore import BookCore
-
-
-def diff(bookcore_1: BookCore, bookcore_2: BookCore) -> Tuple[int, int, int]:
-    '''
-    Calculate the number of different booklevel.
-    '''
-    res_asks = 0
-    res_bids = 0
-    # Asks
-    L = min(bookcore_1.depth_asks, bookcore_2.depth_asks)
-    asks_1, asks_2 = bookcore_1.asks[:L], bookcore_2.asks[:L]
-    for i in range(L):
-        if not asks_1[i].true_eq(asks_2[i]):
-            res_asks += 1
-    res_asks += max(bookcore_1.depth_asks, bookcore_2.depth_asks) - L
-    
-    # Bids
-    L = min(bookcore_1.depth_bids, bookcore_2.depth_bids)
-    bids_1, bids_2 = bookcore_1.bids[:L], bookcore_2.bids[:L]
-    for i in range(L):
-        if not bids_1[i].true_eq(bids_2[i]):
-            res_bids += 1
-    res_bids += max(bookcore_1.depth_bids, bookcore_2.depth_bids) - L
-    
-    return (res_asks, res_bids, res_asks + res_bids)
+from cbookcore import BookCore, diff
 
 def blcsi(pf_path: Path, group_index: int) -> List[Tuple[int, int, int, int]]:
     pf = pq.ParquetFile(pf_path)
@@ -64,7 +36,7 @@ def blcsi(pf_path: Path, group_index: int) -> List[Tuple[int, int, int, int]]:
         blcsi.append((row.ts, res_asks, res_bids, res_total))
     
     # read next row group to gen the last datapoint
-    if group_index + 1 < pf.num_row_groups: # FIXME: 如果是一个文件的最后一个row_group，实际上可以使用下一个文件的第一个 row_group生成最后一个数据点。
+    if group_index + 1 < pf.num_row_groups: # FIXME: 如果是一个文件的最后一个row_group，实际上可以使用下一个文件的第一个 row_group的第一行生成最后一个数据点。
         next_row_group = pf.read_row_group(group_index + 1)
         next_df = next_row_group.to_pandas()
         if not next_df.empty and next_df.iloc[0]['action'] == 'snapshot':
