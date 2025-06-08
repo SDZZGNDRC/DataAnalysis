@@ -91,8 +91,8 @@ if __name__ == "__main__":
                 dp['data']['bids'] = bids_bl
                 dp['action'] = 'snapshot'
                 iter_rows = 0
-                row_group.append((group_start, i + 1))
-                group_start = i + 1
+                row_group.append((group_start, i))
+                group_start = i
         if group_start < len(dps):
             row_group.append((group_start, len(dps)))
         
@@ -143,7 +143,7 @@ if __name__ == "__main__":
                 dp['data']['asks'] = asks_bl
                 dp['data']['bids'] = bids_bl
                 dp['action'] = 'snapshot'
-                row_group.append((group_start, i + 1))
+                row_group.append((group_start, i))
                 group_start = i
         if group_start < len(dps):
             row_group.append((group_start, len(dps)))
