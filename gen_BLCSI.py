@@ -77,7 +77,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, required=True, help="Output directory for the BLCSI indicator.")
     parser.add_argument("--num-processes", type=int, default=os.cpu_count(),
                         help=f"Number of processes to use. Defaults to the number of CPU cores ({os.cpu_count()}).")
-    parser.add_argument("--row-group-size", type=int, default=100000, help="Row group size for the output parquet file.")
+    parser.add_argument("--row-group-size", type=int, default=100_000, help="Row group size for the output parquet file.")
     
     args = parser.parse_args()
     data_dir = Path(args.dir)
@@ -136,6 +136,40 @@ if __name__ == "__main__":
         
     # Sort by timestamp
     all_results.sort(key=lambda x: x[0])
+    
+    # because of the way `blcsi` generated, 
+    # the first row of the first origin parquet file can not generated the corresponded datapoint.
+    # Now, we should copy the first `blcsi` datapoint and insert before it to keep the length not changed.
+    # FIXME: Here we should get the first row with `snapshot` action in the first parquet file.
+    first_pf = pq.ParquetFile(pfs[0])
+    first_row = None
+    # NOTICE: if no `snapshot` in first parquet file, would be a bug.
+    for i in range(first_pf.num_row_groups):
+        df = first_pf.read_row_group(i).to_pandas()
+        if df.iloc[0].action == 'snapshot':
+            first_row = df.iloc[0]
+            break
+    else:
+        raise Exception(f'No snapshot found in the first parquet file ({pfs[0].name})')
+    tmp = deepcopy(all_results[0])
+    all_results.insert(0, (int(first_row.ts), tmp[1], tmp[2], tmp[3]))
+    
+    # ensure the number of row is equal
+    total_row = 0
+    for i, p in enumerate(pfs):
+        pf = pq.ParquetFile(p)
+        # 第一个parquet文件的第一个`row_group`不计入在内。
+        if i == 0:
+            df = pf.read_row_group(0).to_pandas()
+            if df.iloc[0].action == 'snapshot':
+                total_row += pf.metadata.num_rows
+            else:
+                for i in range(1, pf.num_row_groups):
+                    total_row += pf.metadata.row_group(i).num_rows
+        else:
+            total_row += pf.metadata.num_rows
+    if total_row != len(all_results):
+        raise Exception(f'the number({len(all_results)}) of generated `blcsi` is not equal to origin parquet files ({total_row})')
     
     # Convert to pyarrow table
     ts, asks, bids, total = zip(*all_results)
