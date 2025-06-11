@@ -89,7 +89,7 @@ if __name__ == "__main__":
         print(f"Error: {data_dir} is not a valid directory.")
         exit(1)
         
-    pfs = sorted(list(data_dir.glob("*.parquet")))[:3]
+    pfs = sorted(list(data_dir.glob("*.parquet")))
     if not pfs:
         print(f"No parquet files found in {data_dir}.")
         exit(1)
