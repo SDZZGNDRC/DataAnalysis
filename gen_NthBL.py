@@ -96,70 +96,76 @@ if __name__ == "__main__":
     else:
         print(f"Found {len(pfs)} parquet files in {data_dir}.")
 
-    # Create a list of tasks (file_path, row_group_index, N)
-    tasks = []
-    print("Scanning files to create tasks...")
-    for pf_path in tqdm(pfs, desc="Scanning files"):
+    # Process each parquet file individually to avoid high memory usage
+    for pf_path in tqdm(pfs, desc="Processing files"):
         try:
             pf = pq.ParquetFile(pf_path)
-            for i in range(pf.num_row_groups):
-                tasks.append((pf_path, i, args.N))
+            if pf.num_row_groups == 0:
+                print(f"Warning: {pf_path.name} has no row groups, skipping.")
+                continue
         except Exception as e:
-            print(f"Warning: Could not read metadata from {pf_path.name}: {e}")
-    
-    if not tasks:
-        print("No row groups to process. Exiting.")
-        exit(0)
+            print(f"Warning: Could not read metadata from {pf_path.name}: {e}, skipping.")
+            continue
 
-    # Process tasks in parallel
-    all_results = []
-    with multiprocessing.Pool(processes=args.num_processes) as pool:
-        with tqdm(total=len(tasks), desc="Processing row groups") as pbar:
-            for result in pool.imap_unordered(worker, tasks):
-                if result:
-                    all_results.extend(result)
-                pbar.update(1)
-
-    if not all_results:
-        print("No data was generated. Exiting.")
-        exit(0)
+        # Create a list of tasks for the current file
+        tasks = [(pf_path, i, args.N) for i in range(pf.num_row_groups)]
         
-    # Sort by timestamp
-    all_results.sort(key=lambda x: x['ts'])
-    
-    # ensure the number of row is equal
-    total_row = 0
-    for i, p in enumerate(pfs):
-        pf = pq.ParquetFile(p)
-        # 第一个parquet文件的第一个`row_group`不计入在内。
-        if i == 0:
-            df = pf.read_row_group(0).to_pandas()
-            if df.iloc[0].action == 'snapshot':
-                total_row += pf.metadata.num_rows
-            else:
-                for i in range(1, pf.num_row_groups):
-                    total_row += pf.metadata.row_group(i).num_rows
-        else:
-            total_row += pf.metadata.num_rows
-    if total_row != len(all_results):
-        raise Exception(f'the number({len(all_results)}) of generated `blcsi` is not equal to origin parquet files ({total_row})')
-    
-    # Convert to pyarrow table
-    bl_table = pa.Table.from_pylist(all_results)
-    
-    # Dump to parquet
-    start_ts = all_results[0]['ts']
-    end_ts = all_results[-1]['ts']
-    prefix = f"OKX-BL{args.N}-{start_ts}-{end_ts}.parquet"
-    output_file = output_dir / prefix
-    pq.write_table(
-        bl_table,
-        output_file,
-        row_group_size=args.row_group_size,
-        compression='ZSTD',
-        compression_level=2
-    )
-    print(f"Successfully generated {len(all_results)} rows.")
-    print(f"NthBL data saved to {output_file}")
+        if not tasks:
+            print(f"No row groups to process in {pf_path.name}. Skipping.")
+            continue
 
+        # Process tasks in parallel for the current file
+        file_results = []
+        with multiprocessing.Pool(processes=args.num_processes) as pool:
+            desc = f"Processing {pf_path.name}"
+            with tqdm(total=len(tasks), desc=desc, leave=False) as pbar:
+                for result in pool.imap_unordered(worker, tasks):
+                    if result:
+                        file_results.extend(result)
+                    pbar.update(1)
+
+        if not file_results:
+            print(f"No data was generated for {pf_path.name}. Skipping.")
+            continue
+            
+        # Sort by timestamp
+        file_results.sort(key=lambda x: x['ts'])
+        
+        # ensure the number of row is equal
+        expected_rows = 0
+        df_first_rg = pf.read_row_group(0).to_pandas()
+        if not df_first_rg.empty and df_first_rg.iloc[0]['action'] == 'snapshot':
+            expected_rows = pf.metadata.num_rows
+        else:
+            for i in range(1, pf.num_row_groups):
+                expected_rows += pf.metadata.row_group(i).num_rows
+        
+        if expected_rows != len(file_results):
+            print(f'Warning: For {pf_path.name}, the number of generated rows ({len(file_results)}) is not equal to the expected number of rows ({expected_rows}). Skipping file.')
+            continue
+
+        # Convert to pyarrow table
+        try:
+            bl_table = pa.Table.from_pylist(file_results)
+        except Exception as e:
+            print(f"Failed to create pyarrow table for {pf_path.name}: {e}")
+            continue
+        
+        # Dump to parquet
+        start_ts = file_results[0]['ts']
+        end_ts = file_results[-1]['ts']
+        # FIXME: 在名称中添加`instId`字段
+        prefix = f"OKX-BL{args.N}-{start_ts}-{end_ts}.parquet"
+        output_file = output_dir / prefix
+        pq.write_table(
+            bl_table,
+            output_file,
+            row_group_size=args.row_group_size,
+            compression='ZSTD',
+            compression_level=2
+        )
+        print(f"Successfully generated {len(file_results)} rows for {pf_path.name}.")
+        print(f"NthBL data saved to {output_file}")
+
+    print("All files processed.")
 

@@ -1,4 +1,4 @@
-from . import Books, pattern1, pattern2
+from . import Books, pattern1, pattern2, pattern3
 
 
 category_map = {
@@ -14,7 +14,8 @@ category_map = {
     'PriceLimit': pattern1.map,
     'Status': pattern1.map,
     'Tickers': pattern1.map,
-    'Trades': pattern1.map,
+    # FIXME: 根据okx的api文档，每次推送可能聚合多条成交数据，需要确认这里的实现是否正确！！！
+    'Trades': pattern3.map,
 }
 
 def get_category_map(category: str):

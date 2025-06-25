@@ -69,31 +69,45 @@ def main():
             regex = re.compile(re.escape(pattern))
         matched_dirs.extend([d for d in all_dirs if regex.fullmatch(d.name)])
     matched_dirs = list(set(matched_dirs))
-    if not matched_dirs:
-        print(f"未找到匹配的目录: {src_patterns}", file=sys.stderr)
-        sys.exit(1)
+    # 递归查找所有文件
+    print("正在收集和校验文件列表...")
+    all_disk_files = []
+    for d in tqdm(matched_dirs, desc="扫描目录", unit="dir"):
+        all_disk_files.extend(list(d.rglob("*.*")))
+    
+    # 过滤出真正的文件，排除目录
+    all_disk_files = [f for f in all_disk_files if f.is_file()]
 
-    # 收集所有源目录的最后一层目录名
-    src_last_dirs = [d.name for d in matched_dirs]
-
-    # 递归查找所有.7z文件
-    files = []
-    for d in matched_dirs:
-        files.extend(list(d.rglob("*.7z")))
-    if not files:
+    # 找出所有.7z文件和它们的stem
+    files_to_process = [f for f in all_disk_files if f.suffix.lower() == '.7z']
+    seven_zip_stems = {f.stem for f in files_to_process}
+    
+    if not files_to_process:
         print("未找到任何.7z文件", file=sys.stderr)
         sys.exit(1)
 
-    # 统计7z文件总数
-    total_7z_files = len(files)
+    # 查找无效文件：既不是.7z，也不是与.7z配对的.json
+    invalid_files = []
+    for f in all_disk_files:
+        is_7z = f.suffix.lower() == '.7z'
+        is_paired_json = f.suffix.lower() == '.json' and f.stem in seven_zip_stems
+        if not is_7z and not is_paired_json:
+            invalid_files.append(f)
 
-    # 校验所有目录下的总文件数是否和7z文件总数一致
-    total_files = 0
-    for d in matched_dirs:
-        total_files += sum(1 for _ in d.rglob("*.*") if _.is_file())
-    if total_files != total_7z_files:
-        print(f"目录下文件总数({total_files})与7z文件总数({total_7z_files})不一致，原目录可能已损坏，包含非7z文件。", file=sys.stderr)
+    if invalid_files:
+        print(f"校验失败！发现 {len(invalid_files)} 个无效文件（非7z文件，也非配对的json文件）。", file=sys.stderr)
+        print("原目录可能已损坏或包含非预期文件。无效文件列表如下：", file=sys.stderr)
+        for f in invalid_files:
+            print(f" - {f}", file=sys.stderr)
         sys.exit(1)
+
+    # 如果校验通过，files_to_process 就是我们要处理的.7z文件列表
+    files = files_to_process
+    total_7z_files = len(files)
+    print(f"校验通过，共找到 {total_7z_files} 个有效的.7z文件进行处理。")
+
+    # 收集所有源目录的最后一层目录名
+    src_last_dirs = [d.name for d in matched_dirs]
 
     manager = Manager()
     error_event = manager.Event()

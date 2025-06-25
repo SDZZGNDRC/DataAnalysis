@@ -1,3 +1,6 @@
+from pathlib import Path
+
+
 class DataName:
     # example: OKX-Books-1INCH-USD-SWAP-400-1689297329268-1689298999939.7z
     @staticmethod
@@ -116,6 +119,11 @@ class DataName:
         return groups
 
     def __init__(self, name, suffix: str = ""):
+        if isinstance(name, Path):
+            name = name.name
+        if not isinstance(name, str):
+            name = str(name)
+        
         if not DataName.validate_name(name):
             raise ValueError(f"Invalid data name: {name}")
         

@@ -1,5 +1,9 @@
 def map(dps):
     try:
+        if any(not dp['data'] for dp in dps):
+            dps = list(filter(lambda dp: dp['data'] is not None, dps))
+        if any(len(dp['data']) != 1 for dp in dps):
+            raise Exception(f"the length of dp['data'] is {len(dp['data'])}")
         res = []
         for dp in dps:
             new_data = {}

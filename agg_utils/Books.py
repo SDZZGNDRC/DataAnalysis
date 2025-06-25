@@ -1,5 +1,9 @@
 def map(dps):
     try:
+        if any(not dp['data'] for dp in dps):
+            dps = list(filter(lambda dp: dp['data'] is not None, dps))
+        if any(len(dp['data']) != 1 for dp in dps):
+            raise Exception(f"Books.map: the length of dp['data'] is {len(dp['data'])}")
         return sorted([
             {
                 "arg": dp['arg'],
@@ -24,6 +28,8 @@ def map(dps):
             else:
                 raise e
         return sorted(res,key=lambda dp: dp['ts'])
+    except Exception as e:
+        raise Exception(f'Books.map: {e}')
 
 
 
