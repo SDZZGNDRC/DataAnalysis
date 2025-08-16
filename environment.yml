@@ -1,0 +1,17 @@
+name: py310-analysis # 我们使用一个新的名字和更稳定的Python 3.10
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pyarrow
+  - pandas
+  - tqdm
+  - numpy
+  - pyarrow
+  - matplotlib
+  - seaborn
+  - pip
+  - pip:
+    - "ray[default]"
+    - cos-python-sdk-v5
