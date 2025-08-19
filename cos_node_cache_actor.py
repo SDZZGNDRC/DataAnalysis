@@ -1,4 +1,5 @@
 import ray
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 import pandas as pd
 import numpy as np
 import os
@@ -179,35 +180,39 @@ class NodeCacheActor:
 # --- 示例：如何在一个 Ray 应用中使用这个节点缓存 Actor ---
 
 @ray.remote
-def data_processing_task(file_key, cache_actors_map):
+def data_processing_task(file_key): # 不再需要传递 cache_actors_map
     """
     一个数据处理任务，它会智能地找到其本地节点的缓存 Actor。
     """
     # 1. 获取当前任务运行在哪一个节点上
-    current_node_id = ray.get_runtime_context().node_id
+    # 使用新的推荐 API
+    current_node_id_str = ray.get_runtime_context().get_node_id() 
     
-    # 2. 从传入的字典中，找到属于本节点的那个 Actor 的句柄
-    local_cache_actor = cache_actors_map[current_node_id]
-    
-    print(f"Task for {file_key} on Node {current_node_id} is requesting file...")
+    # 2. 根据节点ID，动态获取对应名字的 Actor 句柄
+    actor_name = f"cache_actor_{current_node_id_str}"
+    try:
+        # ray.get_actor() 会在集群中寻找这个命名的 Actor
+        local_cache_actor = ray.get_actor(actor_name)
+    except ValueError:
+        # 如果因为某种原因 Actor 不存在，可以提供更清晰的错误信息
+        return f"Failed to find cache actor for node {current_node_id_str}. Actor name '{actor_name}' not found."
+
+    print(f"Task for {file_key} on Node {current_node_id_str} is requesting file...")
     
     try:
-        # 3. 调用本地 Actor 的方法来获取文件路径（可能是缓存或新下载的）
-        # 这是一个异步调用
+        # 3. 调用本地 Actor 的方法
         local_path_ref = local_cache_actor.get.remote(file_key)
         local_file_path = ray.get(local_path_ref)
         
-        # ---- 在这里使用 local_file_path 执行您的数据处理逻辑 ----
-        print(f"Task on {current_node_id} is now processing file: {local_file_path}")
-        time.sleep(2) # 模拟处理
-        # --------------------------------------------------------
+        print(f"Task on {current_node_id_str} is now processing file: {local_file_path}")
+        time.sleep(2) 
         
-        return f"Successfully processed {file_key} on node {current_node_id}"
+        return f"Successfully processed {file_key} on node {current_node_id_str}"
     except Exception as e:
-        return f"Failed to process {file_key} on node {current_node_id}: {e}"
-
+        return f"Failed to process {file_key} on node {current_node_id_str}: {e}"
+    
 if __name__ == '__main__':
-    ray.init() # 假设连接到您的集群
+    ray.init(address='ray://localhost:10001') # 假设连接到您的集群
 
     # --- 关键步骤：为每个节点创建一个专属于它的 Actor ---
     
@@ -217,33 +222,37 @@ if __name__ == '__main__':
     cache_actors = {}
     for node in nodes:
         if node["Alive"]:
-            node_id = node["NodeID"]
-            # 使用 .options() 和自定义资源，将 Actor "钉" 在这个节点上
-            # 这是一个标准的 Ray 模式，用于实现节点亲和性
+            node_id_str = node["NodeID"]
+            actor_name = f"cache_actor_{node_id_str}" # 为每个 actor 创建一个唯一的名字
+            # 使用调度策略来替代自定义资源
+            print(f"Creating actor '{actor_name}' and pinning it to node {node_id_str}...")
             actor_handle = NodeCacheActor.options(
-                resources={f"node:{node_id}": 0.01} # 请求该节点上的少量特定资源
+                name=actor_name, # 命名 Actor
+                scheduling_strategy=NodeAffinitySchedulingStrategy(
+                    node_id=node_id_str,
+                    soft=False
+                )
             ).remote()
-            cache_actors[node_id] = actor_handle
+            cache_actors[node_id_str] = actor_handle
     
     print("All node cache actors have been created:")
     print(cache_actors)
 
     # 假设我们要处理的文件列表 (包含重复文件，以测试缓存)
     files_to_process = [
-        "raw_data/file1.csv",
-        "raw_data/file2.csv",
-        "raw_data/file1.csv", # 重复
-        "raw_data/file3.csv",
-        "raw_data/file2.csv", # 重复
-        "raw_data/file1.csv", # 重复
+        "raw_data/600001.SH.csv",
+        "raw_data/600002.SH.csv",
+        "raw_data/600001.SH.csv", # 重复
+        "raw_data/600003.SH.csv",
+        "raw_data/600004.SH.csv",
+        "raw_data/600003.SH.csv", # 重复
+        "raw_data/600001.SH.csv", # 重复
     ]
 
     task_refs = []
     for file_key in files_to_process:
-        # 将整个 actor 映射字典传递给每个任务
-        # 任务内部会自己找到属于它的那一个
-        task_refs.append(data_processing_task.remote(file_key, cache_actors))
-    
+        task_refs.append(data_processing_task.remote(file_key))
+
     results = ray.get(task_refs)
 
     print("\n--- Final Results ---")
