@@ -1,21 +1,20 @@
-# DataAnalysis
+# 数据分析工具库
 
-This repo contains the utils for data analysis, for example, generating the parquet format data from the raw data.
+这个仓库包含了数据分析相关的工具，例如从原始数据生成 parquet 格式的数据。
 
-## Scripts
+## 脚本说明
 
-- `j2p.py`: convert raw json data to parquet
-- `aggregate_parquet.py`: aggregate multiple small parquet files into less but larger parquet
-files
-- `test_aggregate_parquet.py`: make sure that the aggregated parquet files are correct
-- `random_books_generator.py`: generate random books dataset
-- `unzip.py`: unzip all zip files in a folder into a folder
+- `j2p.py`: 将原始 JSON 数据转换为 parquet 格式
+- `aggregate_parquet.py`: 将多个小 parquet 文件聚合成较少但更大的 parquet 文件
+- `test_aggregate_parquet.py`: 确保聚合后的 parquet 文件正确无误
+- `random_books_generator.py`: 生成随机的订单簿数据集
+- `unzip.py`: 将文件夹中的所有 zip 文件解压到指定文件夹
 
-> **Process flow**: zipped raw data (7z file) -> `unzip.py` -> raw data (json file) -> `j2p.py` -> parquet files -> `aggregate_parquet.py` -> aggregated parquet files (data set)
+> **处理流程**: 压缩的原始数据 (7z 文件) -> `unzip.py` -> 原始数据 (json 文件) -> `j2p.py` -> parquet 文件 -> `aggregate_parquet.py` -> 聚合后的 parquet 文件 (数据集)  
 
-Then we should use `indicator` to process the data set and dump the data into InfluxDB.
+(Optional) 然后我们应该使用 `indicator` 来处理数据集并将数据导入到 InfluxDB 中。  
 
-## InfluxDB schema
+## InfluxDB 数据模式
 
 ### BLCSI
 
