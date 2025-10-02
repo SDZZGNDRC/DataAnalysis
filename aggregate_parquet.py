@@ -56,27 +56,23 @@ def split_dataframe(df: DataFrame, chunk_size: int) -> List[pd.DataFrame]:
 def gen(task: Tuple[str, List[str]], chunk_size: int = 100_000):
     # NOTICE: Only support books now.
     """
-    Process a list of parquet files and generate a dataset by filtering and transforming data.
+    处理一组parquet文件并通过过滤和转换数据生成数据集。
 
-    This function takes a tuple containing the output path and a list of file paths to parquet files,
-    along with an optional chunk size parameter. It processes each file by sorting the data by timestamp,
-    removing unnecessary columns, and converting data types. It then updates a dataset factory with the
-    processed records. If a 'snapshot' action is not encountered in any of the files, the function raises
-    an exception.
+    此函数接收一个包含输出路径和parquet文件路径列表的元组，以及一个可选的块大小参数。
+    它通过按时间戳排序数据、移除不必要的列和转换数据类型来处理每个文件。
+    然后使用处理后的记录更新数据集工厂。如果在任何文件中没有遇到'snapshot'操作，函数将抛出异常。
 
     Args:
-    - task: A tuple containing the following elements:
-        - out_path (str): The path where the processed dataset will be stored.
-        - files (List[str]): A list of file paths to the parquet files to be processed.
-    - chunk_size (int, optional): The size of the chunk for the DataSetFactory. Defaults to 100,000.
+    - task: 包含以下元素的元组：
+        - out_path (str): 处理后数据集存储的路径。
+        - files (List[str]): 要处理的parquet文件路径列表。
+    - chunk_size (int, optional): DataSetFactory的块大小。默认为100,000。
 
     Raises:
-    - Exception: If no 'snapshot' action is found in any of the files, an exception is raised indicating that
-                the dataset is incomplete.
+    - Exception: 如果在任何文件中没有找到'snapshot'操作，将抛出异常，表明数据集不完整。
 
     Returns:
-    - None: This function does not return any value. The result is the generation of a processed dataset at
-            the specified output path.
+    - None: 此函数不返回任何值。结果是在指定输出路径生成处理后的数据集。
     """
     out_path, files = task
     dsId = Path(out_path).name # Remove tailing `\\` and `/`

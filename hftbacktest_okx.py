@@ -50,6 +50,195 @@ from hftbacktest.types import (
 from hftbacktest.data.validation import correct_event_order, validate_event_order
 from hftbacktest.data.validation import correct_local_timestamp
 
+INT64_MAX = np.int64(np.iinfo(np.int64).max)
+
+
+@njit
+def find_first_snapshot_ts(data: EVENT_ARRAY) -> int:
+    """
+    找到第一个snapshot事件的交易所时间戳。
+    
+    Args:
+        data: 事件数据数组
+    
+    Returns:
+        第一个snapshot的exch_ts，如果没有找到则返回-1
+    """
+    for i in range(len(data)):
+        if data[i].ev & DEPTH_SNAPSHOT_EVENT:
+            return data[i].exch_ts
+    return -1
+
+
+@njit
+def filter_events_by_ts(data: EVENT_ARRAY, min_ts: int) -> EVENT_ARRAY:
+    """
+    过滤掉早于或等于指定时间戳的事件。
+    
+    Args:
+        data: 事件数据数组
+        min_ts: 最小时间戳阈值
+    
+    Returns:
+        过滤后的事件数组
+    """
+    # 首先计算有多少事件满足条件
+    count = 0
+    for i in range(len(data)):
+        if data[i].exch_ts > min_ts:
+            count += 1
+    
+    # 创建结果数组并填充
+    result = np.empty(count, data.dtype)
+    idx = 0
+    for i in range(len(data)):
+        if data[i].exch_ts > min_ts:
+            result[idx] = data[i]
+            idx += 1
+    
+    return result
+
+
+@njit
+def merge_arrays_by_exch_ts(depth_data: EVENT_ARRAY, trade_data: EVENT_ARRAY) -> EVENT_ARRAY:
+    """
+    基于交易所时间戳归并两个已排序的事件数组（njit优化版本）。
+    
+    Args:
+        depth_data: 深度事件数组（按本地接收顺序）
+        trade_data: 交易事件数组（按本地接收顺序）
+    
+    Returns:
+        归并后的事件数组
+    """
+    len_d = len(depth_data)
+    len_t = len(trade_data)
+    
+    if len_d == 0:
+        return trade_data
+    if len_t == 0:
+        return depth_data
+    
+    # 创建结果数组
+    merged = np.empty(len_d + len_t, depth_data.dtype)
+    
+    # 归并过程
+    ptr_d = 0
+    ptr_t = 0
+    idx = 0
+    
+    while ptr_d < len_d and ptr_t < len_t:
+        if depth_data[ptr_d].exch_ts <= trade_data[ptr_t].exch_ts:
+            merged[idx] = depth_data[ptr_d]
+            ptr_d += 1
+        else:
+            merged[idx] = trade_data[ptr_t]
+            ptr_t += 1
+        idx += 1
+    
+    # 处理剩余的深度事件
+    while ptr_d < len_d:
+        merged[idx] = depth_data[ptr_d]
+        ptr_d += 1
+        idx += 1
+    
+    # 处理剩余的交易事件
+    while ptr_t < len_t:
+        merged[idx] = trade_data[ptr_t]
+        ptr_t += 1
+        idx += 1
+    
+    return merged
+
+
+def generate_lognormal_latencies(
+    n: int,
+    mu: float = 0.0,
+    sigma: float = 1.0,
+    seed: int = 42
+) -> np.ndarray:
+    """
+    生成符合对数正态分布的随机延迟序列，并自动截断在 int64 可表示范围内。
+    
+    Args:
+        n: 需要生成的延迟数量
+        mu: 对数正态分布的mu参数（对数空间的均值）
+        sigma: 对数正态分布的sigma参数（对数空间的标准差）
+        seed: 随机种子
+    
+    Returns:
+        长度为n的延迟数组（纳秒）
+    """
+    rng = np.random.default_rng(seed)
+    lognormal_samples = rng.lognormal(mean=float(mu), sigma=float(sigma), size=n)
+    latencies_ns = lognormal_samples * 1_000_000.0
+
+    int64_max = float(INT64_MAX)
+    overflow_mask = ~np.isfinite(latencies_ns) | (latencies_ns > int64_max)
+    overflow_count = int(np.count_nonzero(overflow_mask))
+    if overflow_count > 0:
+        latencies_ns[overflow_mask] = int64_max
+        print(f"警告: 有 {overflow_count} 个随机延迟值超过 int64 范围，已自动截断。")
+
+    latencies_ns = np.clip(latencies_ns, 0.0, int64_max)
+    return latencies_ns.astype(np.int64, copy=False)
+
+
+@njit
+def generate_monotonic_local_timestamp_with_random_latency(
+    data: EVENT_ARRAY,
+    latencies: np.ndarray,
+    min_timestamp_increment: int = 1
+) -> None:
+    """
+    使用随机延迟数组在原地生成单调递增的local_ts，并确保不会发生int64溢出。
+    
+    这是最终版合并方案第3步的实现：生成单调递增的本地时间戳。
+    
+    Args:
+        data: 事件数据数组（已按归并后的顺序排列）
+        latencies: 对数正态分布的随机延迟数组，长度应与data相同
+        min_timestamp_increment: 两个连续本地时间戳之间的最小增量（默认1纳秒）
+    """
+    last_local_ts = np.int64(0)
+    min_increment_i64 = np.int64(min_timestamp_increment)
+    if min_increment_i64 < 0:
+        min_increment_i64 = np.int64(0)
+    max_last_without_overflow = INT64_MAX - min_increment_i64
+    if max_last_without_overflow < 0:
+        max_last_without_overflow = np.int64(0)
+
+    for i in range(len(data)):
+        exch_ts = data[i].exch_ts
+        latency_i = latencies[i]
+        if latency_i < 0:
+            latency_i = np.int64(0)
+
+        max_latency_without_overflow = INT64_MAX - exch_ts
+        if max_latency_without_overflow < 0:
+            max_latency_without_overflow = np.int64(0)
+
+        if latency_i > max_latency_without_overflow:
+            candidate_local_ts = INT64_MAX
+        else:
+            candidate_local_ts = exch_ts + latency_i
+
+        if last_local_ts > max_last_without_overflow:
+            monotonic_threshold = INT64_MAX
+        else:
+            monotonic_threshold = last_local_ts + min_increment_i64
+
+        if candidate_local_ts < monotonic_threshold:
+            final_local_ts = monotonic_threshold
+        else:
+            final_local_ts = candidate_local_ts
+
+        if final_local_ts > INT64_MAX:
+            final_local_ts = INT64_MAX
+
+        data[i].local_ts = final_local_ts
+        last_local_ts = final_local_ts
+
 
 @njit
 def generate_monotonic_local_timestamp(
@@ -58,10 +247,10 @@ def generate_monotonic_local_timestamp(
     min_timestamp_increment: int = 1
 ) -> None:
     """
-    在原地生成单调递增的local_ts。
-
+    在原地生成单调递增的local_ts（固定延迟版本），并防止int64溢出。
+ 
     用于缺少本地时间戳但按本地接收时间排序的数据。
-
+ 
     Args:
         data: 事件数据数组，必须按本地接收时间排序。
         simulated_latency: 要添加到交易所时间戳的基础延迟。
@@ -69,18 +258,42 @@ def generate_monotonic_local_timestamp(
         min_timestamp_increment: 两个连续本地时间戳之间的最小增量，
                                 以确保严格单调性。对于纳秒，1就可以。
     """
-    last_local_ts = 0
+    last_local_ts = np.int64(0)
+    min_increment_i64 = np.int64(min_timestamp_increment)
+    if min_increment_i64 < 0:
+        min_increment_i64 = np.int64(0)
+    max_last_without_overflow = INT64_MAX - min_increment_i64
+    if max_last_without_overflow < 0:
+        max_last_without_overflow = np.int64(0)
+ 
+    latency_i64 = np.int64(simulated_latency)
+    if latency_i64 < 0:
+        latency_i64 = np.int64(0)
+ 
     for i in range(len(data)):
         exch_ts = data[i].exch_ts
-
-        # 合理的 local_ts 是交易所时间戳加上一些延迟
-        candidate_local_ts = exch_ts + simulated_latency
-
-        # 新的 local_ts 必须：
-        # 1. 至少是 candidate_local_ts
-        # 2. 严格大于前一个事件的 local_ts
-        new_local_ts = max(candidate_local_ts, last_local_ts + min_timestamp_increment)
-
+ 
+        max_latency_without_overflow = INT64_MAX - exch_ts
+        if max_latency_without_overflow < 0:
+            max_latency_without_overflow = np.int64(0)
+ 
+        if latency_i64 > max_latency_without_overflow:
+            candidate_local_ts = INT64_MAX
+        else:
+            candidate_local_ts = exch_ts + latency_i64
+ 
+        if last_local_ts > max_last_without_overflow:
+            new_local_ts = INT64_MAX
+        else:
+            monotonic_threshold = last_local_ts + min_increment_i64
+            if candidate_local_ts < monotonic_threshold:
+                new_local_ts = monotonic_threshold
+            else:
+                new_local_ts = candidate_local_ts
+ 
+        if new_local_ts > INT64_MAX:
+            new_local_ts = INT64_MAX
+ 
         data[i].local_ts = new_local_ts
         last_local_ts = new_local_ts
 
@@ -491,9 +704,28 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
     return combined_events, found_snapshot
 
 
+def merge_event_arrays_by_exch_ts(depth_events: np.ndarray, trade_events: np.ndarray) -> np.ndarray:
+    """
+    基于交易所时间戳的归并合并策略（最终版合并方案第2步）。
+    
+    使用类似归并排序的方式合并深度数据和交易数据，保证：
+    1. 本地顺序不变性：深度数据和交易数据在各自流中的相对顺序保持不变
+    2. 按交易所时间戳排序：合并后的事件流近似按exchangeTs排序
+    
+    Args:
+        depth_events: 深度事件数组（已按本地接收顺序排列）
+        trade_events: 交易事件数组（已按本地接收顺序排列）
+    
+    Returns:
+        合并后的事件数组
+    """
+    # 使用njit优化的归并函数
+    return merge_arrays_by_exch_ts(depth_events, trade_events)
+
+
 def merge_event_arrays(event_arrays: List[np.ndarray]) -> np.ndarray:
     """
-    合并多个事件数组并按时间排序。
+    合并多个事件数组并按时间排序（兼容性保留）。
     
     Args:
         event_arrays: 事件数组列表
@@ -535,7 +767,11 @@ def convert(
     feed_latency: float = 0,
     base_latency: float = 0,
     simulated_latency: Optional[float] = None,
-    num_processes: Optional[int] = None
+    num_processes: Optional[int] = None,
+    latency_mu: float = 0.0,
+    latency_sigma: float = 1.0,
+    use_random_latency: bool = False,
+    random_seed: int = 42
 ) -> NDArray:
     """
     转换OKX市场数据文件为HftBacktest兼容格式（支持多进程）。
@@ -549,6 +785,10 @@ def convert(
         simulated_latency: 如果数据缺少localTs，使用此值模拟延迟（纳秒）。
                           如果为None且需要，将使用feed_latency
         num_processes: 使用的进程数，None表示使用CPU核心数
+        latency_mu: 对数正态分布的均值参数（用于随机延迟）
+        latency_sigma: 对数正态分布的标准差参数（用于随机延迟）
+        use_random_latency: 是否使用随机延迟而不是固定延迟
+        random_seed: 随机数生成器的种子值
 
     Returns:
         与HftBacktest兼容的转换后数据
@@ -607,31 +847,29 @@ def convert(
     books_batches = create_batches(books_files, 'Books', num_processes)
     trades_batches = create_batches(trades_files, 'Trades', num_processes)
 
-    all_event_arrays = []
-    found_snapshot = False
+    # 步骤1：数据加载与预处理 - 分别处理深度和交易数据
+    depth_event_arrays = []
+    trade_event_arrays = []
 
-    # 处理Books文件（需要保持顺序，先处理以确保找到snapshot）
+    # 处理Books文件
     if books_batches:
         print("使用多进程处理Books文件...")
         
         # 并行扫描所有Books文件以查找snapshot
         print("并行扫描文件以查找snapshot...")
         
-        # 创建扫描批次
         scan_batch_size = max(1, len(books_files) // num_processes)
         scan_batches = []
         for i in range(0, len(books_files), scan_batch_size):
             batch = books_files[i:i + scan_batch_size]
             scan_batches.append(batch)
         
-        # 并行扫描
         first_snapshot_found = False
         if num_processes > 1:
             with Pool(num_processes) as pool:
                 scan_results = pool.map(scan_snapshot_worker, scan_batches)
                 first_snapshot_found = any(scan_results)
         else:
-            # 单进程扫描
             for batch in scan_batches:
                 if scan_snapshot_worker(batch):
                     first_snapshot_found = True
@@ -642,8 +880,6 @@ def convert(
         
         print("找到snapshot，开始并行处理...")
         
-        # 现在我们知道有snapshot，可以安全地并行处理所有批次
-        # 更新所有批次的snapshot状态为True
         updated_batches = []
         for batch_files, data_type, feed_lat, _ in books_batches:
             updated_batches.append((batch_files, data_type, feed_lat, True))
@@ -653,15 +889,12 @@ def convert(
                 results = pool.map(process_file_worker, updated_batches)
                 for events, _ in results:
                     if len(events) > 0:
-                        all_event_arrays.append(events)
+                        depth_event_arrays.append(events)
         else:
-            # 单进程处理
             for batch in updated_batches:
                 events, _ = process_file_worker(batch)
                 if len(events) > 0:
-                    all_event_arrays.append(events)
-        
-        found_snapshot = True
+                    depth_event_arrays.append(events)
 
     # 处理Trades文件
     if trades_batches:
@@ -671,39 +904,65 @@ def convert(
                 results = pool.map(process_file_worker, trades_batches)
                 for events, _ in results:
                     if len(events) > 0:
-                        all_event_arrays.append(events)
+                        trade_event_arrays.append(events)
         else:
-            # 单进程处理
             for batch in trades_batches:
                 events, _ = process_file_worker(batch)
                 if len(events) > 0:
-                    all_event_arrays.append(events)
+                    trade_event_arrays.append(events)
 
-    if not all_event_arrays:
+    if not depth_event_arrays and not trade_event_arrays:
         raise ValueError("没有处理任何数据！")
 
-    print("合并所有事件数据...")
-    tmp = merge_event_arrays(all_event_arrays)
+    # 合并深度事件
+    print("合并深度数据...")
+    if depth_event_arrays:
+        depth_events = np.concatenate(depth_event_arrays) if len(depth_event_arrays) > 1 else depth_event_arrays[0]
+        first_snapshot_ts = find_first_snapshot_ts(depth_events)
+        if first_snapshot_ts >= 0:
+            print(f"第一个snapshot时间戳: {first_snapshot_ts}")
+    else:
+        depth_events = np.empty(0, event_dtype)
+        first_snapshot_ts = -1
     
-    print(f"总共处理了 {len(tmp)} 条事件")
+    # 合并交易事件并过滤
+    print("合并交易数据...")
+    if trade_event_arrays:
+        trade_events = np.concatenate(trade_event_arrays) if len(trade_event_arrays) > 1 else trade_event_arrays[0]
+        if first_snapshot_ts >= 0:
+            before_count = len(trade_events)
+            trade_events = filter_events_by_ts(trade_events, first_snapshot_ts)
+            if before_count > len(trade_events):
+                print(f"过滤掉 {before_count - len(trade_events)} 条早于snapshot的交易数据")
+    else:
+        trade_events = np.empty(0, event_dtype)
+    
+    print(f"深度事件: {len(depth_events)}, 交易事件: {len(trade_events)}")
+    
+    # 步骤2：归并合并
+    print("归并合并深度和交易数据...")
+    tmp = merge_event_arrays_by_exch_ts(depth_events, trade_events)
+    print(f"归并后总共 {len(tmp)} 条事件")
 
-    # 检查是否需要生成单调local timestamp
+    # 步骤3：生成单调本地时间戳
     needs_monotonic_ts = False
     if len(tmp) > 0:
-        # 简单检查：如果第一批事件的local_ts都是exch_ts + feed_latency
         sample_size = min(4000, len(tmp))
-        matches = 0
-        for i in range(sample_size):
-            if tmp[i]['local_ts'] == tmp[i]['exch_ts'] + int(feed_latency):
-                matches += 1
-        if matches > sample_size * 0.9:  # 90%以上匹配
+        matches = sum(1 for i in range(sample_size) if tmp[i]['local_ts'] == tmp[i]['exch_ts'] + int(feed_latency))
+        if matches > sample_size * 0.9:
             needs_monotonic_ts = True
             print("检测到合成的local timestamp，将生成单调递增序列")
 
     if needs_monotonic_ts:
-        print("生成单调递增的local timestamp")
-        generate_monotonic_local_timestamp(tmp, int(simulated_latency))
+        if use_random_latency:
+            print(f"使用对数正态分布随机延迟 (mu={latency_mu}, sigma={latency_sigma}, seed={random_seed})")
+            latencies = generate_lognormal_latencies(len(tmp), latency_mu, latency_sigma, random_seed)
+            generate_monotonic_local_timestamp_with_random_latency(tmp, latencies)
+        else:
+            print("使用固定延迟生成单调local timestamp")
+            generate_monotonic_local_timestamp(tmp, int(simulated_latency))
 
+    # 步骤4：最终处理
     print("修正延迟")
     tmp = correct_local_timestamp(tmp, base_latency)
 
@@ -714,6 +973,7 @@ def convert(
         np.argsort(tmp['local_ts'], kind='mergesort')
     )
 
+    print("验证事件顺序")
     validate_event_order(data)
 
     if output_filename is not None:
@@ -783,6 +1043,29 @@ def main():
         default=None,
         help='使用的进程数（默认: 自动确定基于CPU核心数）'
     )
+    parser.add_argument(
+        '--use-random-latency',
+        action='store_true',
+        help='使用对数正态分布的随机延迟（最终版合并方案）'
+    )
+    parser.add_argument(
+        '--latency-mu',
+        type=float,
+        default=0.0,
+        help='对数正态分布的mu参数（默认: 0.0）'
+    )
+    parser.add_argument(
+        '--latency-sigma',
+        type=float,
+        default=1.0,
+        help='对数正态分布的sigma参数（默认: 1.0）'
+    )
+    parser.add_argument(
+        '--random-seed',
+        type=int,
+        default=42,
+        help='随机延迟生成的种子（默认: 42）'
+    )
 
     args = parser.parse_args()
 
@@ -825,7 +1108,11 @@ def main():
                 feed_latency=args.feed_latency,
                 base_latency=args.base_latency,
                 simulated_latency=args.simulated_latency,
-                num_processes=args.num_processes
+                num_processes=args.num_processes,
+                latency_mu=args.latency_mu,
+                latency_sigma=args.latency_sigma,
+                use_random_latency=args.use_random_latency,
+                random_seed=args.random_seed
             )
             print("转换完成！")
         except Exception as e:
