@@ -6,3 +6,8 @@ tmp
 .env
 *.txt
 *.log
+*.npy
+*.npz
+hftbacktest/
+backtest_results/
+lightning_logs/
