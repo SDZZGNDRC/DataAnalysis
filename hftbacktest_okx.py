@@ -919,6 +919,7 @@ def convert(
     if depth_event_arrays:
         depth_events = np.concatenate(depth_event_arrays) if len(depth_event_arrays) > 1 else depth_event_arrays[0]
         first_snapshot_ts = find_first_snapshot_ts(depth_events)
+        # TODO: 这里应该删除早于第一个snapshot的所有订单簿更新的。
         if first_snapshot_ts >= 0:
             print(f"第一个snapshot时间戳: {first_snapshot_ts}")
     else:
