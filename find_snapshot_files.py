@@ -11,6 +11,7 @@
 """
 
 import argparse
+import csv
 import glob
 import os
 import shutil
@@ -88,6 +89,44 @@ def has_snapshot(json_file: str) -> bool:
     return False
 
 
+def get_snapshot_details(json_file: str) -> List[dict]:
+    """
+    获取JSON文件中snapshot的详细信息。
+
+    Args:
+        json_file: JSON文件路径
+
+    Returns:
+        包含snapshot信息的字典列表
+    """
+    with open(json_file, 'rb') as f:
+        data = json_loads(f.read())
+
+    details = []
+    items = data.get('data', [])
+    total = len(items)
+
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+
+        if item.get('action') == 'snapshot':
+            # 尝试从 data 字段中获取时间戳
+            ts = None
+            if 'data' in item and isinstance(item['data'], list) and len(item['data']) > 0:
+                first_data = item['data'][0]
+                if isinstance(first_data, dict):
+                    ts = first_data.get('ts')
+            
+            details.append({
+                'index': i,
+                'timestamp': ts,
+                'total': total,
+                'relative_pos': (i + 1) / total if total > 0 else 0
+            })
+    return details
+
+
 def collect_files(patterns: List[str]) -> List[str]:
     """
     收集文件，支持通配符和目录递归。
@@ -110,17 +149,18 @@ def collect_files(patterns: List[str]) -> List[str]:
     return sorted(list(set(files)))  # 去重并排序
 
 
-def process_files_worker(file_chunk: List[str]) -> List[str]:
+def process_files_worker(args) -> List:
     """
-    多进程worker函数，处理一批文件，找出包含snapshot的文件。
+    多进程worker函数，处理一批文件。
 
     Args:
-        file_chunk: 文件路径列表
+        args: (file_chunk, extract_details) 元组
 
     Returns:
-        包含snapshot的文件路径列表
+        结果列表。如果extract_details为True，返回字典列表；否则返回文件路径列表。
     """
-    snapshot_files = []
+    file_chunk, extract_details = args
+    results = []
     temp_dir = tempfile.mkdtemp(prefix='snapshot_worker_')
 
     try:
@@ -131,8 +171,14 @@ def process_files_worker(file_chunk: List[str]) -> List[str]:
                 else:
                     json_file = file_path
 
-                if has_snapshot(json_file):
-                    snapshot_files.append(file_path)
+                if extract_details:
+                    details = get_snapshot_details(json_file)
+                    for d in details:
+                        d['file_path'] = file_path
+                        results.append(d)
+                else:
+                    if has_snapshot(json_file):
+                        results.append(file_path)
 
                 # 删除解压的JSON文件
                 if file_path.endswith('.7z') and os.path.exists(json_file):
@@ -147,7 +193,7 @@ def process_files_worker(file_chunk: List[str]) -> List[str]:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
 
-    return snapshot_files
+    return results
 
 
 def create_batches(file_list: List[str], num_procs: int) -> List[List[str]]:
@@ -176,6 +222,7 @@ def main():
     parser.add_argument('path', help='文件路径模式，支持通配符或目录')
     parser.add_argument('--processes', type=int, default=cpu_count(),
                        help=f'使用的进程数（默认：{cpu_count()}）')
+    parser.add_argument('--output-csv', help='保存snapshot详细信息的CSV文件路径')
 
     args = parser.parse_args()
 
@@ -191,31 +238,52 @@ def main():
 
     # 分批处理
     batches = create_batches(all_files, args.processes)
+    
+    # 准备worker参数
+    extract_details = args.output_csv is not None
+    worker_args = [(batch, extract_details) for batch in batches]
 
     # 使用多进程处理
     with Pool(args.processes) as pool:
         if tqdm is not None:
             pbar = tqdm(total=len(all_files), desc="处理文件")
             results = []
-            for result in pool.imap_unordered(process_files_worker, batches):
+            for result in pool.imap_unordered(process_files_worker, worker_args):
                 results.append(result)
                 # 估算已处理的文件数（每个批次平均文件数）
                 batch_size = len(all_files) // len(batches)
                 pbar.update(batch_size)
             pbar.close()
         else:
-            results = pool.map(process_files_worker, batches)
+            results = pool.map(process_files_worker, worker_args)
 
     # 合并结果
-    snapshot_files = []
+    all_results = []
     for result in results:
-        snapshot_files.extend(result)
+        all_results.extend(result)
 
-    # 排序并输出
-    snapshot_files.sort()
-    print(f"\n找到 {len(snapshot_files)} 个包含 snapshot 的文件：")
-    for file_path in snapshot_files:
-        print(file_path)
+    if extract_details:
+        # 排序
+        all_results.sort(key=lambda x: (x['file_path'], x['index']))
+        
+        print(f"\n找到 {len(all_results)} 个 snapshot 记录，正在保存到 {args.output_csv}...")
+        
+        try:
+            with open(args.output_csv, 'w', newline='', encoding='utf-8') as f:
+                fieldnames = ['file_path', 'index', 'timestamp', 'total', 'relative_pos']
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(all_results)
+            print("保存完成。")
+        except Exception as e:
+            print(f"保存CSV文件失败: {e}")
+            
+    else:
+        # 排序并输出
+        all_results.sort()
+        print(f"\n找到 {len(all_results)} 个包含 snapshot 的文件：")
+        for file_path in all_results:
+            print(file_path)
 
 
 if __name__ == '__main__':
