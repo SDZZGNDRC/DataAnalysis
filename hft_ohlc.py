@@ -70,6 +70,28 @@ def generate_ohlc_logic(hbt, out, interval_ns):
         
     return True
 
+def run_backtest(data_list, args, ohlc_data, interval_ns):
+    asset = (
+        BacktestAsset()
+            .data(data_list)
+            .linear_asset(1.0)
+            .constant_order_latency(args.latency, args.latency)
+            .risk_adverse_queue_model()
+            .no_partial_fill_exchange()
+            .trading_value_fee_model(0.0008, 0.0010)
+            .tick_size(args.tick_size)
+            .lot_size(args.lot_size)
+            .last_trades_capacity(1_000_000)
+            # 【非常重要】为了生成 OHLC，必须开启 last_trades_capacity
+            # 如果设为 0，hbt.last_trades(0) 将永远为空。
+    )
+
+    hbt = HashMapMarketDepthBacktest([asset])
+    
+    generate_ohlc_logic(hbt, ohlc_data, interval_ns)
+    
+    hbt.close()
+
 def main():
     parser = argparse.ArgumentParser(description="Generate OHLC data from HFT backtest npz data.")
     
@@ -80,6 +102,7 @@ def main():
     parser.add_argument("--lot-size", type=float, default=0.001, help="Lot size. Default: 0.001")
     parser.add_argument("--latency", type=int, default=10_000_000, help="Order latency in ns. Default: 10,000,000 (10ms)")
     parser.add_argument("--format", choices=['csv', 'parquet'], default='csv', help="Output format if output file is specified. Default: csv")
+    parser.add_argument("--concat", action="store_true", help="Concatenate all input files into a single backtest asset instead of processing them individually.")
 
     args = parser.parse_args()
 
@@ -120,39 +143,25 @@ def main():
 
     print("Starting OHLC generation...")
 
-    for i, file_path in enumerate(input_files):
+    if args.concat:
         try:
-            print(f"Processing file {i+1}/{len(input_files)}: {file_path}")
-            data = np.load(file_path)['data']
-            
-            asset = (
-                BacktestAsset()
-                    .data([data])
-                    .linear_asset(1.0)
-                    .constant_order_latency(args.latency, args.latency)
-                    .risk_adverse_queue_model()
-                    .no_partial_fill_exchange()
-                    .trading_value_fee_model(0.0008, 0.0010)
-                    .tick_size(args.tick_size)
-                    .lot_size(args.lot_size)
-                    .last_trades_capacity(1_000_000)
-                    # 【非常重要】为了生成 OHLC，必须开启 last_trades_capacity
-                    # 如果设为 0，hbt.last_trades(0) 将永远为空。
-            )
-
-            hbt = HashMapMarketDepthBacktest([asset])
-            
-            generate_ohlc_logic(hbt, ohlc_data, interval_ns)
-            
-            # 关闭回测并释放内存
-            _ = hbt.close()
-            del data
-            del asset
-            del hbt
+            print(f"Processing {len(input_files)} files as a single concatenated dataset...")
+            run_backtest(input_files, args, ohlc_data, interval_ns)
             
         except Exception as e:
-            print(f"Error processing file {file_path}: {e}")
+            print(f"Error processing concatenated files: {e}")
             sys.exit(1)
+    else:
+        for i, file_path in enumerate(input_files):
+            try:
+                print(f"Processing file {i+1}/{len(input_files)}: {file_path}")
+                data = np.load(file_path)['data']
+                run_backtest([data], args, ohlc_data, interval_ns)
+                del data
+                
+            except Exception as e:
+                print(f"Error processing file {file_path}: {e}")
+                sys.exit(1)
 
     if len(ohlc_data) > 0:
         # 使用 schema 创建 DataFrame
