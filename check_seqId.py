@@ -113,7 +113,7 @@ def check_seqId_worker_raw(file_path: Path) -> dict:
     pairs = [] # List of (prevSeqId, seqId, file_name, file_index)
     
     # Extract timestamps from filename
-    start_ts, end_ts = extract_timestamps_from_filename(file_path.name)
+    # start_ts, end_ts = extract_timestamps_from_filename(file_path.name)
     
     try:
         if not py7zr.is_7zfile(file_path):
@@ -152,12 +152,20 @@ def check_seqId_worker_raw(file_path: Path) -> dict:
                     inner_obj = inner_data_list[0]
                     curr_seqId = inner_obj.get('seqId')
                     curr_prevSeqId = inner_obj.get('prevSeqId')
+                    curr_ts = inner_obj.get('ts')
                     
                     # Skip if seqId/prevSeqId are missing
                     if curr_seqId is None or curr_prevSeqId is None:
                         continue
                     
-                    pairs.append((curr_prevSeqId, curr_seqId, file_path.name, file_index))
+                    if curr_ts is not None:
+                        try:
+                            curr_ts = int(curr_ts)
+                            pairs.append((curr_prevSeqId, curr_seqId, file_path.name, file_index, curr_ts, curr_ts))
+                        except ValueError:
+                            pairs.append((curr_prevSeqId, curr_seqId, file_path.name, file_index))
+                    else:
+                        pairs.append((curr_prevSeqId, curr_seqId, file_path.name, file_index))
 
     except Exception as e:
         return {'file': file_path.name, 'status': 'error', 'msg': str(e)}
@@ -165,17 +173,10 @@ def check_seqId_worker_raw(file_path: Path) -> dict:
     # Process pairs to form segments
     segments = merge_pairs(pairs)
     
-    # Add timestamp information to segments
-    segments_with_timestamps = []
-    for seg in segments:
-        # seg is now (p, s, file_name, file_index, end_file)
-        seg_start, seg_end, file_name, file_index, end_file = seg
-        segments_with_timestamps.append((seg_start, seg_end, file_name, file_index, start_ts, end_ts, end_file))
-
     return {
         'file': file_path.name,
         'status': 'ok',
-        'segments': segments_with_timestamps,
+        'segments': segments,
         'errors': errors
     }
 
@@ -364,9 +365,15 @@ def main():
                     writer.writerow(['prevSeqId', 'seqId', 'start_file', 'end_file', 'start_timestamp', 'start_datetime', 'end_timestamp', 'end_datetime'])
                     for seg in final_segments:
                         # seg: (p, s, file_name, file_index, start_ts, end_ts, end_file)
-                        start_ts = seg[4] if len(seg) > 4 else None
-                        end_ts = seg[5] if len(seg) > 5 else None
-                        end_file = seg[6] if len(seg) > 6 else None
+                        if len(seg) == 7:
+                            start_ts = seg[4]
+                            end_ts = seg[5]
+                            end_file = seg[6]
+                        else:
+                            start_ts = None
+                            end_ts = None
+                            end_file = seg[4]
+
                         writer.writerow([
                             seg[0],
                             seg[1],
@@ -389,8 +396,13 @@ def main():
                     writer = csv.writer(csvfile)
                     writer.writerow(['prevSeqId', 'seqId', 'file_name', 'file_index', 'start_timestamp', 'start_datetime', 'end_timestamp', 'end_datetime'])
                     for gap in gaps:
-                        start_ts = gap[4] if len(gap) > 4 else None
-                        end_ts = gap[5] if len(gap) > 5 else None
+                        if len(gap) == 7:
+                            start_ts = gap[4]
+                            end_ts = gap[5]
+                        else:
+                            start_ts = None
+                            end_ts = None
+                            
                         writer.writerow([
                             gap[0],
                             gap[1],
