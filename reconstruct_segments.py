@@ -77,6 +77,40 @@ def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
                 segments.append((p, s, bitmap, start_ts, end_ts))
     return segments
 
+def validate_segments_no_overlap(segments: List[Tuple]) -> bool:
+    """
+    验证segments中的时间区间没有重叠
+    每个segment的结构: (prevSeqId, seqId, bitmap, start_ts, end_ts)
+    返回True表示没有重叠，False表示有重叠
+    """
+    if not segments:
+        return True
+    
+    # 过滤掉时间戳为None的segments
+    valid_segments = []
+    for seg in segments:
+        p, s, bitmap, start_ts, end_ts = seg
+        if start_ts is not None and end_ts is not None:
+            valid_segments.append((start_ts, end_ts, seg))
+    
+    # 按开始时间排序
+    valid_segments.sort(key=lambda x: x[0])
+    
+    # 检查重叠
+    for i in range(1, len(valid_segments)):
+        prev_start, prev_end, prev_seg = valid_segments[i-1]
+        curr_start, curr_end, curr_seg = valid_segments[i]
+        
+        # 如果前一个区间的结束时间大于等于当前区间的开始时间，说明有重叠
+        if prev_end >= curr_start:
+            print(f"Overlap detected:")
+            print(f"  Segment 1: start_ts={prev_start}, end_ts={prev_end}")
+            print(f"  Segment 2: start_ts={curr_start}, end_ts={curr_end}")
+            print(f"  Overlap range: {curr_start} to {min(prev_end, curr_end)}")
+            return False
+    
+    return True
+
 def process_file(args: Tuple[Path, int]) -> dict:
     """
     args: (file_path, global_file_index)
@@ -239,6 +273,11 @@ def main():
         
         # Global Merge
         final_segments = merge_pairs(all_segments)
+        
+        # 检验final_segments中每一个segments的start_ts和end_ts组成的区间集合没有任何重叠
+        if not validate_segments_no_overlap(final_segments):
+            print("ERROR: Found overlapping segments in final_segments!")
+            return
         
         print(f"Writing {len(final_segments)} final segments to {args.output}...")
         
