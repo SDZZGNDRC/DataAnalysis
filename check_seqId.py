@@ -11,6 +11,11 @@ import csv
 from collections import defaultdict
 import re
 from datetime import datetime
+try:
+    import orjson
+    HAS_ORJSON = True
+except ImportError:
+    HAS_ORJSON = False
 
 def extract_timestamps_from_filename(file_name: str) -> Tuple[int, int]:
     """
@@ -132,9 +137,12 @@ def check_seqId_worker_raw(file_path: Path) -> dict:
                 file_bytes = content_dict[fname].read()
                 
                 try:
-                    data = json.loads(file_bytes)
-                except json.JSONDecodeError:
-                    errors.append([fname, -1, "JSON Decode Error", -1, -1])
+                    if HAS_ORJSON:
+                        data = orjson.loads(file_bytes)
+                    else:
+                        data = json.loads(file_bytes)
+                except (json.JSONDecodeError, orjson.JSONDecodeError) as e:
+                    errors.append([fname, -1, f"JSON Decode Error: {str(e)}", -1, -1])
                     continue
                 
                 # Validate structure based on Books.json
