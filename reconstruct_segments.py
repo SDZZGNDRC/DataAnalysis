@@ -29,10 +29,10 @@ def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
     """
     # Sort by prevSeqId
     # x[0] is prevSeqId
-    sorted_pairs = sorted(list(set(pairs)), key=lambda x: x[0])
+    pairs.sort(key=lambda x: x[0])
     segments = []
 
-    for pair in sorted_pairs:
+    for pair in pairs:
         # Unpack standard structure
         # We ensure all pairs entering this function have 5 elements
         p, s, bitmap, start_ts, end_ts = pair
@@ -85,7 +85,7 @@ def process_file(args: Tuple[Path, int]) -> dict:
     file_path, global_file_index = args
     errors = []
     # Standardized Structure: (prevSeqId, seqId, file_bitmap, start_ts, end_ts)
-    pairs = [] 
+    pairs = []
     
     # Pre-calculate bitmap for this file (it's just a single bit set)
     current_bitmap = 1 << global_file_index
