@@ -2,6 +2,8 @@ import argparse
 import multiprocessing
 import os
 import json
+import subprocess
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 import py7zr
@@ -308,8 +310,30 @@ def main():
     # Compress
     archive_path = output_path.with_suffix('.7z')
     print(f"Compressing to {archive_path}...")
-    with py7zr.SevenZipFile(archive_path, 'w') as z:
-        z.write(output_path, arcname=output_path.name)
+    
+    # Try using subprocess 7z command first (faster)
+    if shutil.which('7z'):
+        try:
+            # Use 7z command line tool for better performance
+            cmd = ['7z', 'a', '-t7z', '-mx=3', '-mmt=on', str(archive_path), str(output_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            print("7z compression completed successfully using subprocess")
+        except subprocess.CalledProcessError as e:
+            print(f"7z command failed: {e}")
+            print(f"stderr: {e.stderr}")
+            print("Falling back to py7zr...")
+            # Fallback to py7zr
+            with py7zr.SevenZipFile(archive_path, 'w') as z:
+                z.write(output_path, arcname=output_path.name)
+        except Exception as e:
+            print(f"Unexpected error with 7z command: {e}")
+            print("Falling back to py7zr...")
+            with py7zr.SevenZipFile(archive_path, 'w') as z:
+                z.write(output_path, arcname=output_path.name)
+    else:
+        print("7z command not found in PATH, using py7zr...")
+        with py7zr.SevenZipFile(archive_path, 'w') as z:
+            z.write(output_path, arcname=output_path.name)
         
     print("Done.")
 
