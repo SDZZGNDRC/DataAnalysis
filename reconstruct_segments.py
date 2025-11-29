@@ -240,7 +240,7 @@ def main():
     
     # Global sort to ensure index 0 is the earliest file (by name)
     files.sort(key=lambda x: x.name)
-    all_filenames = [f.name for f in files]
+    all_filenames = [str(f.resolve()) for f in files]
     
     print(f"Total: Found {len(files)} 7z files. Starting processing...")
     
