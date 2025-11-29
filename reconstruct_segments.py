@@ -25,7 +25,8 @@ def timestamp_to_datetime(timestamp: int) -> str:
 def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
     """
     Merge pairs using bitmap for file coverage.
-    Input Tuple structure: (prevSeqId, seqId, file_bitmap, start_ts, end_ts)
+    Input Tuple structure: (prevSeqId, seqId, file_bitmap, start_ts, end_ts, startSeqId)
+    Output Tuple structure: (prevSeqId, seqId, file_bitmap, start_ts, end_ts, startSeqId)
     """
     # Sort by prevSeqId
     # x[0] is prevSeqId
@@ -33,13 +34,12 @@ def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
     segments = []
 
     for pair in pairs:
-        # Unpack standard structure
-        # We ensure all pairs entering this function have 5 elements
-        p, s, bitmap, start_ts, end_ts = pair
+        # Unpack standard structure - now with 6 elements
+        p, s, bitmap, start_ts, end_ts, startSeqId = pair
             
-        if p == -1: 
-            # New chain starts
-            segments.append((p, s, bitmap, start_ts, end_ts))
+        if p == -1:
+            # New chain starts - use current startSeqId
+            segments.append((p, s, bitmap, start_ts, end_ts, startSeqId))
         else:
             # Try to merge with existing segments
             merged = False
@@ -47,7 +47,7 @@ def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
             # But strictly speaking we should iterate. For reverse searching, iterating backwards is better.
             for i in range(len(segments) - 1, -1, -1):
                 seg = segments[i]
-                seg_p, seg_s, seg_bitmap, seg_start_ts, seg_end_ts = seg
+                seg_p, seg_s, seg_bitmap, seg_start_ts, seg_end_ts, seg_startSeqId = seg
                 
                 if p == seg_s:
                     # Case: Existing Segment ends where New Pair starts -> Append to end
@@ -58,7 +58,8 @@ def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
                     new_start_ts = seg_start_ts if seg_start_ts is not None else start_ts
                     new_end_ts = end_ts if end_ts is not None else seg_end_ts
                     
-                    segments[i] = (seg_p, s, new_bitmap, new_start_ts, new_end_ts)
+                    # Keep the original startSeqId from the segment
+                    segments[i] = (seg_p, s, new_bitmap, new_start_ts, new_end_ts, seg_startSeqId)
                     merged = True
                     break
                 elif s == seg_p:
@@ -69,18 +70,20 @@ def merge_pairs(pairs: List[Tuple]) -> List[Tuple]:
                     new_start_ts = start_ts if start_ts is not None else seg_start_ts
                     new_end_ts = seg_end_ts if seg_end_ts is not None else end_ts
                     
-                    segments[i] = (p, seg_s, new_bitmap, new_start_ts, new_end_ts)
+                    # Use the current pair's startSeqId as the new startSeqId (since we're prepending)
+                    segments[i] = (p, seg_s, new_bitmap, new_start_ts, new_end_ts, startSeqId)
                     merged = True
                     break
             
             if not merged:
-                segments.append((p, s, bitmap, start_ts, end_ts))
+                # New segment - use current startSeqId
+                segments.append((p, s, bitmap, start_ts, end_ts, startSeqId))
     return segments
 
 def validate_segments_no_overlap(segments: List[Tuple]) -> bool:
     """
     验证segments中的时间区间没有重叠
-    每个segment的结构: (prevSeqId, seqId, bitmap, start_ts, end_ts)
+    每个segment的结构: (prevSeqId, seqId, bitmap, start_ts, end_ts, startSeqId)
     返回True表示没有重叠，False表示有重叠
     """
     if not segments:
@@ -89,7 +92,7 @@ def validate_segments_no_overlap(segments: List[Tuple]) -> bool:
     # 过滤掉时间戳为None的segments
     valid_segments = []
     for seg in segments:
-        p, s, bitmap, start_ts, end_ts = seg
+        p, s, bitmap, start_ts, end_ts, startSeqId = seg
         if start_ts is not None and end_ts is not None:
             valid_segments.append((start_ts, end_ts, seg))
     
@@ -173,7 +176,7 @@ def process_file(args: Tuple[Path, int]) -> dict:
                         except ValueError:
                             pass
                     
-                    pairs.append((curr_prevSeqId, curr_seqId, current_bitmap, ts_val, ts_val))
+                    pairs.append((curr_prevSeqId, curr_seqId, current_bitmap, ts_val, ts_val, curr_seqId))
 
     except Exception as e:
         return {'file': file_path.name, 'status': 'error', 'msg': str(e)}
@@ -281,10 +284,13 @@ def main():
         
         print(f"Writing {len(final_segments)} final segments to {args.output}...")
         
+        # 按照start_ts进行升序排序
+        final_segments.sort(key=lambda x: x[3] if x[3] is not None else 0)
+        
         with open(args.output, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow([
-                'prevSeqId', 'seqId',
+                'prevSeqId', 'seqId', 'startSeqId',
                 'start_timestamp', 'start_datetime',
                 'end_timestamp', 'end_datetime',
                 'duration_hours',
@@ -292,8 +298,8 @@ def main():
             ])
             
             for seg in tqdm(final_segments, desc="Writing CSV"):
-                # seg: (prev, seq, bitmap, start_ts, end_ts)
-                p, s, bitmap, start_ts, end_ts = seg
+                # seg: (prev, seq, bitmap, start_ts, end_ts, startSeqId)
+                p, s, bitmap, start_ts, end_ts, startSeqId = seg
                 
                 # Decode Bitmap to Filenames
                 covered_str = decode_bitmap(bitmap, all_filenames)
@@ -306,6 +312,7 @@ def main():
                 writer.writerow([
                     p,
                     s,
+                    startSeqId,
                     start_ts,
                     timestamp_to_datetime(start_ts),
                     end_ts,
