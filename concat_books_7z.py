@@ -16,6 +16,8 @@ try:
 except ImportError:
     HAS_ORJSON = False
 
+from DataFile.data_name import DataName
+
 def get_timestamp(item: Dict[str, Any]) -> Optional[int]:
     try:
         # Structure: item -> data -> [0] -> ts
@@ -298,7 +300,19 @@ def main():
         }
     }
     
-    output_path = Path(args.output)
+    # Determine output filename based on prefix and timestamps
+    first_file = files[0].name
+    try:
+        dn = DataName(first_file)
+        prefix = dn.prefix
+    except Exception as e:
+        print(f"Warning: Could not parse prefix from {first_file}: {e}")
+        # Fallback: use default prefix "OKX-Books-unknown"
+        prefix = "OKX-Books-unknown"
+
+    # Use actual timestamps (min_ts, max_ts) for filename
+    output_filename = f"{prefix}-{int(min_ts)}-{int(max_ts)}.json"
+    output_path = Path(output_filename)
     
     print(f"Writing to {output_path}...")
     with open(output_path, 'wb') as f:
@@ -335,6 +349,13 @@ def main():
         with py7zr.SevenZipFile(archive_path, 'w') as z:
             z.write(output_path, arcname=output_path.name)
         
+    # Delete the JSON file after successful compression
+    try:
+        os.remove(output_path)
+        print(f"Deleted JSON file: {output_path}")
+    except OSError as e:
+        print(f"Warning: Could not delete JSON file {output_path}: {e}")
+
     print("Done.")
 
 if __name__ == "__main__":
