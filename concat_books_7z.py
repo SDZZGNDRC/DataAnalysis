@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 import py7zr
+from pytest import skip
 from tqdm import tqdm
 import sys
 
@@ -210,7 +211,7 @@ def main():
     result_list = []
     start_item = global_items[start_index]
     result_list.append(start_item)
-    
+    skip_count = 0
     for i in tqdm(range(start_index + 1, len(global_items)), desc="Collecting chain"):
         item = global_items[i]
         seq_id, prev_seq_id = get_seq_ids(item)
@@ -223,6 +224,7 @@ def main():
         # Check timestamp limit
         ts = get_timestamp(item)
         if ts is not None and ts > args.end_timestamp:
+            skip_count += 1
             continue
 
         # Check if directly linked to a collected item
@@ -269,8 +271,11 @@ def main():
         if is_connected:
             result_list.append(item)
             collected_seq_ids.add(seq_id)
+        else:
+            skip_count += 1
 
     print(f"Collected {len(result_list)} items.")
+    print(f"Skipped {skip_count} items beyond end_timestamp or unconnected.")
 
     # 5. Output
     if not result_list:
