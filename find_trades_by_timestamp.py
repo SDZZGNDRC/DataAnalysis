@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 import py7zr
 from tqdm import tqdm
+from DataFile.data_name import DataName
 
 try:
     import orjson
@@ -112,6 +113,7 @@ def main():
     parser.add_argument("source_dir", type=str, help="Directory containing 7z files")
     parser.add_argument("--output", type=str, default="found_trades_files.csv", help="Output CSV filename")
     parser.add_argument("--num-processes", type=int, default=os.cpu_count(), help="Number of worker processes")
+    parser.add_argument("--save-csv", action="store_true", help="If specified, save result to CSV. Otherwise, merge files into one 7z file.")
 
     args = parser.parse_args()
     
@@ -217,19 +219,92 @@ def main():
     print(f"Set range: {final_set[0]['file_path']} ... {final_set[-1]['file_path']}")
     print(f"Set Time Range: {min(f['start_timestamp'] for f in final_set)} - {max(f['end_timestamp'] for f in final_set)}")
 
-    # 4. Save to CSV
-    keys = ['file_index', 'file_path', 'start_timestamp', 'end_timestamp']
-    try:
-        with open(args.output, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=keys)
-            writer.writeheader()
-            for item in final_set:
-                # Filter keys to match CSV
-                row = {k: item[k] for k in keys}
-                writer.writerow(row)
-        print(f"Saved result to {args.output}")
-    except Exception as e:
-        print(f"Error saving CSV: {e}")
+    if args.save_csv:
+        # 4. Save to CSV
+        keys = ['file_index', 'file_path', 'start_timestamp', 'end_timestamp']
+        try:
+            with open(args.output, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=keys)
+                writer.writeheader()
+                for item in final_set:
+                    # Filter keys to match CSV
+                    row = {k: item[k] for k in keys}
+                    writer.writerow(row)
+            print(f"Saved result to {args.output}")
+        except Exception as e:
+            print(f"Error saving CSV: {e}")
+    else:
+        # Merge files
+        print(f"Merging {len(final_set)} files...")
+        
+        merged_items = []
+        # Calculate overall timestamps from the scanned results in final_set
+        overall_min_ts = min(f['start_timestamp'] for f in final_set)
+        overall_max_ts = max(f['end_timestamp'] for f in final_set)
+        
+        for item in tqdm(final_set, desc="Merging content"):
+            fpath = item['file_path']
+            try:
+                with py7zr.SevenZipFile(fpath, mode='r') as z:
+                    all_fnames = z.getnames()
+                    json_fname = next((f for f in all_fnames if f.endswith('.json')), None)
+                    if not json_fname:
+                        print(f"Warning: No JSON found in {fpath}")
+                        continue
+                        
+                    content_dict = z.read(targets=[json_fname])
+                    file_bytes = content_dict[json_fname].read()
+                    
+                    if HAS_ORJSON:
+                        data_obj = orjson.loads(file_bytes)
+                    else:
+                        data_obj = json.loads(file_bytes)
+                        
+                    # Merge data
+                    current_items = data_obj.get('data', [])
+                    merged_items.extend(current_items)
+                        
+            except Exception as e:
+                print(f"Error processing {fpath} for merge: {e}")
+        
+        if not merged_items:
+            print("Error: No data merged.")
+            return
+
+        # Construct merged object
+        merged_obj = {
+            "elapsedTime": [int(overall_min_ts), int(overall_max_ts)],
+            "data": merged_items
+        }
+        
+        # Generate filename
+        first_file_path = final_set[0]['file_path']
+        try:
+            dn = DataName(Path(first_file_path).name)
+            prefix = dn.prefix
+            
+            new_base_name = f"{prefix}-{int(overall_min_ts)}-{int(overall_max_ts)}"
+            new_json_name = f"{new_base_name}.json"
+            new_7z_name = f"{new_base_name}.7z"
+            
+            print(f"Writing merged JSON to {new_json_name}...")
+            with open(new_json_name, 'wb') as f:
+                if HAS_ORJSON:
+                    f.write(orjson.dumps(merged_obj))
+                else:
+                    f.write(json.dumps(merged_obj).encode('utf-8'))
+            
+            print(f"Compressing to {new_7z_name}...")
+            with py7zr.SevenZipFile(new_7z_name, 'w') as z:
+                z.write(new_json_name, arcname=new_json_name)
+                
+            print(f"Removing temporary JSON {new_json_name}...")
+            os.remove(new_json_name)
+            
+            print(f"Successfully created {new_7z_name}")
+            
+        except Exception as e:
+            print(f"Error generating output file: {e}")
 
 if __name__ == "__main__":
     main()
