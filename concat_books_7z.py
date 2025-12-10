@@ -127,11 +127,6 @@ def main():
     else:
         file_paths = args.files
 
-    # 1. Sort files to ensure correct order
-    # Assuming files are named with timestamps or some order.
-    # If user provides them in specific order via command line, we might want to respect that?
-    # But usually shell expansion sorts them.
-    # Let's sort by name to be deterministic.
     files = sorted([f.resolve() for f in file_paths], key=lambda x: x.name)
     
     if not files:
@@ -197,15 +192,11 @@ def main():
     start_global_index = global_seq_map[args.startSeqId]
     print(f"Found startSeqId at global index {start_global_index}. Total items: {len(global_items)}")
 
-    # 4. Traverse and Collect    
+    # 4. Traverse and Collect
     print(f"Traversing {len(global_items)} items to reconstruct chain starting from {args.startSeqId}...")
     
-    if args.startSeqId not in global_seq_map:
-        print(f"Error: startSeqId {args.startSeqId} not found.")
-        return
-    
     start_index = global_seq_map[args.startSeqId]
-    print(f"Start ID found at index {start_index}. Ignoring previous {start_index} items.")
+    print(f"Ignoring previous {start_index} items.")
     
     collected_seq_ids = {args.startSeqId}
     result_list = []

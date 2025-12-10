@@ -82,6 +82,10 @@ def main():
             # Calculate gap: current start - candidate end
             diff = current['start_timestamp'] - candidate['end_timestamp']
             
+            if diff < 0:
+                print(f'Error: diff({diff}) < 0')
+                exit(-1)
+            
             # We only merge if diff is within threshold.
             # diff <= max_gap_ms.
             # We allow overlaps (diff < 0) as they are "close".
@@ -98,7 +102,6 @@ def main():
             if current['end_timestamp'] > target['end_timestamp']:
                 target['end_timestamp'] = current['end_timestamp']
                 target['end_datetime'] = timestamp_to_datetime(target['end_timestamp'])
-                # target['seqId'] = current['seqId'] # Update last seqId
             
             # Append covered files
             if current['covered_files']:
@@ -120,7 +123,7 @@ def main():
     print(f"Resulting in {len(final_segments)} final segments.")
     
     # Write output
-    fieldnames = ['prevSeqId', 'seqId', 'start_timestamp', 'start_datetime', 
+    fieldnames = ['prevSeqId', 'seqId', 'startSeqId', 'start_timestamp', 'start_datetime',
                   'end_timestamp', 'end_datetime', 'duration_hours', 'covered_files']
     
     with open(args.output, 'w', newline='', encoding='utf-8') as f:
