@@ -46,6 +46,8 @@ def run_find_trades(start_ts: int, end_ts: int, trades_dir: str, num_processes: 
             return []
         # 读取 CSV
         files = []
+        # 增加字段大小限制，避免 field larger than field limit 错误
+        csv.field_size_limit(10000000)  # 10 MB
         with open(tmp_csv, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -216,6 +218,8 @@ def main():
     
     # 读取 CSV
     rows = []
+    # 增加字段大小限制，避免 field larger than field limit 错误
+    csv.field_size_limit(10000000)  # 10 MB
     with open(args.csv, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
