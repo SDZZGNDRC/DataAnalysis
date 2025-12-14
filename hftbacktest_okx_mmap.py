@@ -708,20 +708,20 @@ def scan_snapshot_worker(files_chunk: List[str]) -> bool:
     return found_snapshot
 
 
-def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> Tuple[np.ndarray, bool]:
+def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool, Optional[str]]) -> Tuple[Optional[str], int, bool]:
     """
     多进程worker函数，处理一批文件。
     
     Args:
-        file_info_chunk: 包含(文件列表, 数据类型, feed_latency, found_snapshot)的元组
+        file_info_chunk: 包含(文件列表, 数据类型, feed_latency, found_snapshot, tmp_dir)的元组
     
     Returns:
-        Tuple of (events_array, found_snapshot)
+        Tuple of (memmap_file_path, length, found_snapshot)
     """
-    files, data_type, feed_latency, found_snapshot = file_info_chunk
+    files, data_type, feed_latency, found_snapshot, tmp_dir = file_info_chunk
     
     if not files:
-        return np.empty(0, event_dtype), found_snapshot
+        return None, 0, found_snapshot
     
     all_events = []
     temp_dir = tempfile.mkdtemp(prefix='okx_worker_')
@@ -762,7 +762,7 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
             shutil.rmtree(temp_dir)
     
     if not all_events:
-        return np.empty(0, event_dtype), found_snapshot
+        return None, 0, found_snapshot
     
     # 合并所有事件
     if len(all_events) == 1:
@@ -775,7 +775,21 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
             combined_events[offset:offset + len(events)] = events
             offset += len(events)
     
-    return combined_events, found_snapshot
+    # 将结果写入memmap文件
+    fd, result_path = tempfile.mkstemp(prefix='okx_worker_res_', suffix='.dat', dir=tmp_dir)
+    os.close(fd)
+    
+    try:
+        mmap = np.memmap(result_path, dtype=event_dtype, mode='w+', shape=combined_events.shape)
+        mmap[:] = combined_events[:]
+        mmap.flush()
+        del mmap
+    except Exception as e:
+        if os.path.exists(result_path):
+            os.remove(result_path)
+        raise e
+    
+    return result_path, len(combined_events), found_snapshot
 
 
 def merge_event_arrays_by_exch_ts(depth_events: np.ndarray, trade_events: np.ndarray, tmp_dir: Optional[str] = None) -> np.ndarray:
@@ -843,14 +857,14 @@ def merge_event_arrays(event_arrays: List[np.ndarray]) -> np.ndarray:
     return merged[sort_indices]
 
 
-def concatenate_to_memmap(arrays: List[np.ndarray], tmp_dir: Optional[str] = None) -> np.ndarray:
+def concatenate_paths_to_memmap(path_info_list: List[Tuple[str, int]], tmp_dir: Optional[str] = None) -> np.ndarray:
     """
-    将多个数组合并为一个memmap数组。
+    将多个memmap文件合并为一个memmap数组。
     """
-    if not arrays:
+    if not path_info_list:
         return np.empty(0, event_dtype)
     
-    total_len = sum(len(arr) for arr in arrays)
+    total_len = sum(length for _, length in path_info_list)
     
     tf = tempfile.NamedTemporaryFile(prefix='okx_concat_', delete=False, dir=tmp_dir)
     tf.close()
@@ -858,10 +872,12 @@ def concatenate_to_memmap(arrays: List[np.ndarray], tmp_dir: Optional[str] = Non
     merged = np.memmap(tf.name, dtype=event_dtype, mode='w+', shape=(total_len,))
     
     offset = 0
-    for arr in arrays:
-        l = len(arr)
-        merged[offset:offset+l] = arr
-        offset += l
+    for path, length in path_info_list:
+        # Open memmap just for copying
+        arr = np.memmap(path, dtype=event_dtype, mode='r', shape=(length,))
+        merged[offset:offset+length] = arr[:]
+        del arr # Ensure it's closed
+        offset += length
         
     merged.flush()
     return merged
@@ -949,7 +965,7 @@ def convert(
         batches = []
         for i in range(0, len(file_list), batch_size):
             batch = file_list[i:i + batch_size]
-            batches.append((batch, data_type, feed_latency, False))
+            batches.append((batch, data_type, feed_latency, False, tmp_dir))
         return batches
 
     # 创建批次
@@ -957,8 +973,9 @@ def convert(
     trades_batches = create_batches(trades_files, 'Trades', num_processes)
 
     # 步骤1：数据加载与预处理 - 分别处理深度和交易数据
-    depth_event_arrays = []
-    trade_event_arrays = []
+    depth_path_infos = []
+    trade_path_infos = []
+    temp_worker_files = []
 
     # 处理Books文件
     if books_batches:
@@ -990,20 +1007,22 @@ def convert(
         print("找到snapshot，开始并行处理...")
         
         updated_batches = []
-        for batch_files, data_type, feed_lat, _ in books_batches:
-            updated_batches.append((batch_files, data_type, feed_lat, True))
+        for batch_files, data_type, feed_lat, _, _ in books_batches:
+            updated_batches.append((batch_files, data_type, feed_lat, True, tmp_dir))
         
         if num_processes > 1:
             with Pool(num_processes) as pool:
                 results = pool.map(process_file_worker, updated_batches)
-                for events, _ in results:
-                    if len(events) > 0:
-                        depth_event_arrays.append(events)
+                for mmap_path, length, _ in results:
+                    if length > 0 and mmap_path:
+                        depth_path_infos.append((mmap_path, length))
+                        temp_worker_files.append(mmap_path)
         else:
             for batch in updated_batches:
-                events, _ = process_file_worker(batch)
-                if len(events) > 0:
-                    depth_event_arrays.append(events)
+                mmap_path, length, _ = process_file_worker(batch)
+                if length > 0 and mmap_path:
+                    depth_path_infos.append((mmap_path, length))
+                    temp_worker_files.append(mmap_path)
 
     # 处理Trades文件
     if trades_batches:
@@ -1011,22 +1030,24 @@ def convert(
         if num_processes > 1:
             with Pool(num_processes) as pool:
                 results = pool.map(process_file_worker, trades_batches)
-                for events, _ in results:
-                    if len(events) > 0:
-                        trade_event_arrays.append(events)
+                for mmap_path, length, _ in results:
+                    if length > 0 and mmap_path:
+                        trade_path_infos.append((mmap_path, length))
+                        temp_worker_files.append(mmap_path)
         else:
             for batch in trades_batches:
-                events, _ = process_file_worker(batch)
-                if len(events) > 0:
-                    trade_event_arrays.append(events)
+                mmap_path, length, _ = process_file_worker(batch)
+                if length > 0 and mmap_path:
+                    trade_path_infos.append((mmap_path, length))
+                    temp_worker_files.append(mmap_path)
 
-    if not depth_event_arrays and not trade_event_arrays:
+    if not depth_path_infos and not trade_path_infos:
         raise ValueError("没有处理任何数据！")
 
     # 合并深度事件
     print("合并深度数据...")
-    if depth_event_arrays:
-        depth_events = concatenate_to_memmap(depth_event_arrays, tmp_dir=tmp_dir)
+    if depth_path_infos:
+        depth_events = concatenate_paths_to_memmap(depth_path_infos, tmp_dir=tmp_dir)
         first_snapshot_ts = find_first_snapshot_ts(depth_events)
         # TODO: 这里应该删除早于第一个snapshot的所有订单簿更新的。
         if first_snapshot_ts >= 0:
@@ -1037,8 +1058,8 @@ def convert(
     
     # 合并交易事件并过滤
     print("合并交易数据...")
-    if trade_event_arrays:
-        trade_events = concatenate_to_memmap(trade_event_arrays, tmp_dir=tmp_dir)
+    if trade_path_infos:
+        trade_events = concatenate_paths_to_memmap(trade_path_infos, tmp_dir=tmp_dir)
         if first_snapshot_ts >= 0:
             before_count = len(trade_events)
             
@@ -1058,6 +1079,14 @@ def convert(
                 
     else:
         trade_events = np.empty(0, event_dtype)
+
+    # 清理worker产生的临时文件
+    for f in temp_worker_files:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
     
     print(f"深度事件: {len(depth_events)}, 交易事件: {len(trade_events)}")
     
@@ -1104,6 +1133,8 @@ def convert(
     print("验证事件顺序")
     validate_event_order(data)
 
+    # TODO: 这里要将data拆分为多个npz文件，否则hftbacktest读取时会导致内存溢出
+
     if output_filename is not None:
         print(f"保存到 {output_filename}")
         np.savez_compressed(output_filename, data=data)
@@ -1115,101 +1146,91 @@ def _correct_event_order_core(
         data,
         sorted_exch_index,
         sorted_local_index,
-        out_buffer
+        sorted_final
 ):
     """
-    Core logic implementation that writes to a pre-allocated buffer (memmap or array).
+    Corrects exchange timestamps that are reversed by splitting each row into separate events. These events are then
+    ordered by both exchange and local timestamps through duplication.
+    See the `data <https://hftbacktest.readthedocs.io/en/latest/data.html>`_ for details.
+
+    Args:
+        data: Data to be corrected.
+        sorted_exch_index: Index of data sorted by exchange timestamp.
+        sorted_local_index: Index of data sorted by local timestamp.
+
+    Returns:
+        Data with the corrected event order.
     """
-    n = len(data)
+
     out_rn = 0
     exch_rn = 0
     local_rn = 0
+    while True:
+        sorted_exch = data[sorted_exch_index[exch_rn]]
+        sorted_local = data[sorted_local_index[local_rn]]
+        if (
+                exch_rn < len(data)
+                and local_rn < len(data)
+                and sorted_exch.exch_ts == sorted_local.exch_ts
+                and sorted_exch.local_ts == sorted_local.local_ts
+        ):
+            assert sorted_exch.ev == sorted_local.ev
+            assert (sorted_exch.px == sorted_local.px) or (np.isnan(sorted_exch.px) and np.isnan(sorted_local.px))
+            assert sorted_exch.qty == sorted_local.qty
 
-    while exch_rn < n or local_rn < n:
-        # 安全读取：防止索引越界
-        # 只有在索引有效时才读取数据，否则使用 None 或不处理
-        # 在 Numba 中 struct array 比较难以处理 None，所以我们主要依赖索引检查
-        
-        # 预先判断当前指针是否有效
-        has_exch = exch_rn < n
-        has_local = local_rn < n
+            sorted_final[out_rn] = sorted_exch
+            sorted_final[out_rn].ev = sorted_final[out_rn].ev | EXCH_EVENT | LOCAL_EVENT
 
-        # 获取当前指向的数据（如果有效）
-        if has_exch:
-            curr_exch = data[sorted_exch_index[exch_rn]]
-        
-        if has_local:
-            curr_local = data[sorted_local_index[local_rn]]
-
-        # 逻辑判断开始
-        # 1. 两个队列都有数据，且时间戳完全匹配 -> 合并
-        if (has_exch and has_local and 
-            curr_exch.exch_ts == curr_local.exch_ts and 
-            curr_exch.local_ts == curr_local.local_ts):
-            
-            # 校验逻辑保持不变
-            # 注意：如果 px 是 NaN，Numba 中直接比较可能返回 False，通常用 np.isnan
-            # 这里简化保留原逻辑意图
-            # assert curr_exch.ev == curr_local.ev 
-            
-            out_buffer[out_rn] = curr_exch
-            out_buffer[out_rn].ev = out_buffer[out_rn].ev | EXCH_EVENT | LOCAL_EVENT
-            
             out_rn += 1
             exch_rn += 1
             local_rn += 1
+        elif ((
+                exch_rn < len(data)
+                and local_rn < len(data)
+                and sorted_exch.exch_ts == sorted_local.exch_ts
+                and sorted_exch.local_ts < sorted_local.local_ts
+        ) or (
+                exch_rn < len(data)
+                and sorted_exch.exch_ts < sorted_local.exch_ts
+        )):
+            # exchange
+            sorted_final[out_rn] = sorted_exch
+            sorted_final[out_rn].ev = sorted_final[out_rn].ev | EXCH_EVENT
 
-        # 2. 两个都有数据，且 Exch 先于 Local (或者 Exch.exch_ts < Local.exch_ts)
-        # 注意：原代码的逻辑是：如果 exch_ts 相等看 local_ts，或者直接看 exch_ts
-        elif (has_exch and has_local and 
-              ((curr_exch.exch_ts == curr_local.exch_ts and curr_exch.local_ts < curr_local.local_ts) or
-               (curr_exch.exch_ts < curr_local.exch_ts))):
-            
-            out_buffer[out_rn] = curr_exch
-            out_buffer[out_rn].ev = out_buffer[out_rn].ev | EXCH_EVENT
-            
             out_rn += 1
             exch_rn += 1
+        elif ((
+                exch_rn < len(data)
+                and local_rn < len(data)
+                and sorted_exch.exch_ts == sorted_local.exch_ts
+                and sorted_exch.local_ts > sorted_local.local_ts
+        ) or (
+                local_rn < len(data)
+        )):
+            # local
+            sorted_final[out_rn] = sorted_local
+            sorted_final[out_rn].ev = sorted_final[out_rn].ev | LOCAL_EVENT
 
-        # 3. 两个都有数据，且 Local 先于 Exch (由排除法或明确比较)
-        elif (has_exch and has_local and 
-              curr_exch.exch_ts == curr_local.exch_ts and 
-              curr_exch.local_ts > curr_local.local_ts):
-            
-            out_buffer[out_rn] = curr_local
-            out_buffer[out_rn].ev = out_buffer[out_rn].ev | LOCAL_EVENT
-            
             out_rn += 1
             local_rn += 1
-            
-        # 4. 只有 Exch 剩余
-        elif has_exch and not has_local:
-            out_buffer[out_rn] = curr_exch
-            out_buffer[out_rn].ev = out_buffer[out_rn].ev | EXCH_EVENT
-            
+        elif exch_rn < len(data):
+            # exchange
+            sorted_final[out_rn] = sorted_exch
+            sorted_final[out_rn].ev = sorted_final[out_rn].ev | EXCH_EVENT
+
             out_rn += 1
             exch_rn += 1
-            
-        # 5. 只有 Local 剩余
-        elif not has_exch and has_local:
-            out_buffer[out_rn] = curr_local
-            out_buffer[out_rn].ev = out_buffer[out_rn].ev | LOCAL_EVENT
-            
-            out_rn += 1
-            local_rn += 1
-            
         else:
-            # 理论上不会运行到这里
+            assert exch_rn == len(data)
+            assert local_rn == len(data)
             break
-
-    return out_rn
+    return sorted_final[:out_rn]
 
 def correct_event_order_memmap(
         data,
         sorted_exch_index,
         sorted_local_index,
-        tmp_dir=None,
-        return_as_memmap=False
+        tmp_dir=None
 ):
     """
     Args:
@@ -1223,6 +1244,7 @@ def correct_event_order_memmap(
     # 1. 创建临时文件用于 memmap
     # max possible size is 2x input
     output_shape = (data.shape[0] * 2,)
+    print(f'[correct_event_order_memmap] len of data = {len(data)}')
     
     # 使用 tempfile 创建一个临时文件
     # delete=False 允许我们在关闭文件后重新以 memmap 模式打开（Windows 下通常需要先关闭）
@@ -1237,7 +1259,7 @@ def correct_event_order_memmap(
         
         # 2. 调用 Numba 编译的核心函数
         # memmap 在 Numba 中会被视为普通的 array slice
-        valid_count = _correct_event_order_core(
+        valid_data = _correct_event_order_core(
             data, 
             sorted_exch_index, 
             sorted_local_index, 
@@ -1248,16 +1270,11 @@ def correct_event_order_memmap(
         mmap_buffer.flush()
         
         # 3. 处理结果
-        if return_as_memmap:
-            # 返回切片后的 memmap (依然在磁盘上)
-            # 注意：如果 tf 被关闭，临时文件可能会被删除（取决于 OS），
-            # 如果需要持久化，建议不要使用 tempfile 或者 delete=False
-            return mmap_buffer[:valid_count]
-        else:
-            # 4. 按照需求：最后转回普通的 ndarray
-            # 这步操作会触发从磁盘读取数据到内存
-            final_array = np.array(mmap_buffer[:valid_count])
-            return final_array
+        # 返回切片后的 memmap (依然在磁盘上)
+        # 注意：如果 tf 被关闭，临时文件可能会被删除（取决于 OS），
+        # 如果需要持久化，建议不要使用 tempfile 或者 delete=False
+        print(f'[correct_event_order] valid_count = {len(valid_data)}')
+        return valid_data
 
 def main():
     """CLI入口点"""
