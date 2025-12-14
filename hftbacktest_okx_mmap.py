@@ -88,42 +88,33 @@ def find_first_snapshot_ts(data: EVENT_ARRAY) -> int:
 
 
 @njit
-def filter_events_by_ts(data: EVENT_ARRAY, min_ts: int) -> EVENT_ARRAY:
-    """
-    过滤掉早于或等于指定时间戳的事件。
-    
-    Args:
-        data: 事件数据数组
-        min_ts: 最小时间戳阈值
-    
-    Returns:
-        过滤后的事件数组
-    """
-    # 首先计算有多少事件满足条件
+def count_events_after_ts(data: EVENT_ARRAY, min_ts: int) -> int:
+    """计算满足条件的事件数量"""
     count = 0
     for i in range(len(data)):
         if data[i].exch_ts > min_ts:
             count += 1
-    
-    # 创建结果数组并填充
-    result = np.empty(count, data.dtype)
+    return count
+
+@njit
+def copy_events_after_ts(data: EVENT_ARRAY, min_ts: int, out: EVENT_ARRAY) -> None:
+    """复制满足条件的事件到输出数组"""
     idx = 0
     for i in range(len(data)):
         if data[i].exch_ts > min_ts:
-            result[idx] = data[i]
+            out[idx] = data[i]
             idx += 1
-    
-    return result
 
 
 @njit
-def merge_arrays_by_exch_ts(depth_data: EVENT_ARRAY, trade_data: EVENT_ARRAY) -> EVENT_ARRAY:
+def merge_arrays_by_exch_ts(depth_data: EVENT_ARRAY, trade_data: EVENT_ARRAY, out: EVENT_ARRAY) -> EVENT_ARRAY:
     """
     基于交易所时间戳归并两个已排序的事件数组（njit优化版本）。
     
     Args:
         depth_data: 深度事件数组（按本地接收顺序）
         trade_data: 交易事件数组（按本地接收顺序）
+        out: 输出数组（memmap）
     
     Returns:
         归并后的事件数组
@@ -132,13 +123,15 @@ def merge_arrays_by_exch_ts(depth_data: EVENT_ARRAY, trade_data: EVENT_ARRAY) ->
     len_t = len(trade_data)
     
     if len_d == 0:
-        return trade_data
+        out[:] = trade_data
+        return out
     if len_t == 0:
-        return depth_data
+        out[:] = depth_data
+        return out
     
     # 创建结果数组
     print(f'[debug] Merging {len_d} depth events and {len_t} trade events by exch_ts')
-    merged = np.empty(len_d + len_t, depth_data.dtype)
+    merged = out
     print(f'[debug] Created merged array of size {len(merged)}')
     
     # 归并过程
@@ -785,7 +778,7 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
     return combined_events, found_snapshot
 
 
-def merge_event_arrays_by_exch_ts(depth_events: np.ndarray, trade_events: np.ndarray) -> np.ndarray:
+def merge_event_arrays_by_exch_ts(depth_events: np.ndarray, trade_events: np.ndarray, tmp_dir: Optional[str] = None) -> np.ndarray:
     """
     基于交易所时间戳的归并合并策略（最终版合并方案第2步）。
     
@@ -796,12 +789,21 @@ def merge_event_arrays_by_exch_ts(depth_events: np.ndarray, trade_events: np.nda
     Args:
         depth_events: 深度事件数组（已按本地接收顺序排列）
         trade_events: 交易事件数组（已按本地接收顺序排列）
+        tmp_dir: 临时文件存储目录
     
     Returns:
         合并后的事件数组
     """
     # 使用njit优化的归并函数
-    return merge_arrays_by_exch_ts(depth_events, trade_events)
+    total_len = len(depth_events) + len(trade_events)
+    
+    # 创建临时文件用于 memmap
+    tf = tempfile.NamedTemporaryFile(prefix='okx_merge_', delete=False, dir=tmp_dir)
+    tf.close()
+    
+    merged = np.memmap(tf.name, dtype=depth_events.dtype, mode='w+', shape=(total_len,))
+    
+    return merge_arrays_by_exch_ts(depth_events, trade_events, merged)
 
 
 def merge_event_arrays(event_arrays: List[np.ndarray]) -> np.ndarray:
@@ -841,6 +843,30 @@ def merge_event_arrays(event_arrays: List[np.ndarray]) -> np.ndarray:
     return merged[sort_indices]
 
 
+def concatenate_to_memmap(arrays: List[np.ndarray], tmp_dir: Optional[str] = None) -> np.ndarray:
+    """
+    将多个数组合并为一个memmap数组。
+    """
+    if not arrays:
+        return np.empty(0, event_dtype)
+    
+    total_len = sum(len(arr) for arr in arrays)
+    
+    tf = tempfile.NamedTemporaryFile(prefix='okx_concat_', delete=False, dir=tmp_dir)
+    tf.close()
+    
+    merged = np.memmap(tf.name, dtype=event_dtype, mode='w+', shape=(total_len,))
+    
+    offset = 0
+    for arr in arrays:
+        l = len(arr)
+        merged[offset:offset+l] = arr
+        offset += l
+        
+    merged.flush()
+    return merged
+
+
 def convert(
     file_patterns: List[str],
     output_filename: Optional[str] = None,
@@ -852,7 +878,8 @@ def convert(
     latency_mu: float = 0.0,
     latency_sigma: float = 1.0,
     use_random_latency: bool = False,
-    random_seed: int = 42
+    random_seed: int = 42,
+    tmp_dir: Optional[str] = None
 ) -> NDArray:
     """
     转换OKX市场数据文件为HftBacktest兼容格式（支持多进程）。
@@ -870,6 +897,7 @@ def convert(
         latency_sigma: 对数正态分布的标准差参数（用于随机延迟）
         use_random_latency: 是否使用随机延迟而不是固定延迟
         random_seed: 随机数生成器的种子值
+        tmp_dir: 临时文件存储目录
 
     Returns:
         与HftBacktest兼容的转换后数据
@@ -998,7 +1026,7 @@ def convert(
     # 合并深度事件
     print("合并深度数据...")
     if depth_event_arrays:
-        depth_events = np.concatenate(depth_event_arrays) if len(depth_event_arrays) > 1 else depth_event_arrays[0]
+        depth_events = concatenate_to_memmap(depth_event_arrays, tmp_dir=tmp_dir)
         first_snapshot_ts = find_first_snapshot_ts(depth_events)
         # TODO: 这里应该删除早于第一个snapshot的所有订单簿更新的。
         if first_snapshot_ts >= 0:
@@ -1010,12 +1038,24 @@ def convert(
     # 合并交易事件并过滤
     print("合并交易数据...")
     if trade_event_arrays:
-        trade_events = np.concatenate(trade_event_arrays) if len(trade_event_arrays) > 1 else trade_event_arrays[0]
+        trade_events = concatenate_to_memmap(trade_event_arrays, tmp_dir=tmp_dir)
         if first_snapshot_ts >= 0:
             before_count = len(trade_events)
-            trade_events = filter_events_by_ts(trade_events, first_snapshot_ts)
-            if before_count > len(trade_events):
-                print(f"过滤掉 {before_count - len(trade_events)} 条早于snapshot的交易数据")
+            
+            # 使用memmap进行过滤
+            count = count_events_after_ts(trade_events, first_snapshot_ts)
+            
+            if count < before_count:
+                print(f"过滤掉 {before_count - count} 条早于snapshot的交易数据")
+                
+                tf = tempfile.NamedTemporaryFile(prefix='okx_trades_filtered_', delete=False, dir=tmp_dir)
+                tf.close()
+                
+                filtered_trades = np.memmap(tf.name, dtype=event_dtype, mode='w+', shape=(count,))
+                copy_events_after_ts(trade_events, first_snapshot_ts, filtered_trades)
+                filtered_trades.flush()
+                trade_events = filtered_trades
+                
     else:
         trade_events = np.empty(0, event_dtype)
     
@@ -1023,7 +1063,7 @@ def convert(
     
     # 步骤2：归并合并
     print("归并合并深度和交易数据...")
-    tmp = merge_event_arrays_by_exch_ts(depth_events, trade_events)
+    tmp = merge_event_arrays_by_exch_ts(depth_events, trade_events, tmp_dir=tmp_dir)
     print(f"归并后总共 {len(tmp)} 条事件")
 
     # 步骤3：生成单调本地时间戳
@@ -1057,7 +1097,8 @@ def convert(
     data = correct_event_order_memmap(
         tmp,
         np.argsort(tmp['exch_ts'], kind='mergesort'),
-        np.argsort(tmp['local_ts'], kind='mergesort')
+        np.argsort(tmp['local_ts'], kind='mergesort'),
+        tmp_dir=tmp_dir
     )
 
     print("验证事件顺序")
@@ -1301,6 +1342,12 @@ def main():
         default=42,
         help='随机延迟生成的种子（默认: 42）'
     )
+    parser.add_argument(
+        '--tmp-dir',
+        type=str,
+        default=None,
+        help='临时文件存储目录（默认: 系统临时目录）'
+    )
 
     args = parser.parse_args()
 
@@ -1347,7 +1394,8 @@ def main():
                 latency_mu=args.latency_mu,
                 latency_sigma=args.latency_sigma,
                 use_random_latency=args.use_random_latency,
-                random_seed=args.random_seed
+                random_seed=args.random_seed,
+                tmp_dir=args.tmp_dir
             )
             print("转换完成！")
         except Exception as e:

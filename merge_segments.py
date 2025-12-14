@@ -33,6 +33,7 @@ def main():
     parser.add_argument('--input', default='reconstructed_segments.csv', help='Input CSV file')
     parser.add_argument('--output', default='merged_segments.csv', help='Output CSV file')
     parser.add_argument('--max-gap', required=True, help='Max gap e.g. 1m, 1h')
+    parser.add_argument('--max-duration', help='Max duration e.g. 1h, 1d')
     
     args = parser.parse_args()
     
@@ -41,6 +42,15 @@ def main():
     except ValueError as e:
         print(f"Error parsing max-gap: {e}")
         sys.exit(1)
+
+    max_duration_ms = None
+    if args.max_duration:
+        try:
+            max_duration_ms = parse_duration(args.max_duration)
+            print(f"Max duration: {max_duration_ms} ms")
+        except ValueError as e:
+            print(f"Error parsing max-duration: {e}")
+            sys.exit(1)
         
     print(f"Max gap: {max_gap_ms} ms")
 
@@ -90,9 +100,14 @@ def main():
             # diff <= max_gap_ms.
             # We allow overlaps (diff < 0) as they are "close".
             if diff <= max_gap_ms:
-                if diff < min_diff:
-                    min_diff = diff
-                    best_match_idx = j
+                # Check max duration
+                new_end = max(candidate['end_timestamp'], current['end_timestamp'])
+                new_duration = new_end - candidate['start_timestamp']
+
+                if max_duration_ms is None or new_duration <= max_duration_ms:
+                    if diff < min_diff:
+                        min_diff = diff
+                        best_match_idx = j
         
         if best_match_idx != -1:
             # Merge

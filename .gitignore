@@ -11,3 +11,8 @@ tmp
 hftbacktest/
 backtest_results/
 lightning_logs/
+*.sqlite
+*.csv
+*.7z
+*.tar
+*.zip

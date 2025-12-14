@@ -6,8 +6,9 @@ import json
 import os
 import subprocess
 from tqdm import tqdm
-import pickle  # <-- 1. 引入 pickle
-import base64  # <-- 1. 引入 base64
+import pickle
+import base64
+from pathlib import Path
 
 def run_worker_script(cmd):
     """一个简单的函数，用于在子进程中执行命令行指令。"""
@@ -22,14 +23,22 @@ def run_worker_script(cmd):
     return True
 
 if __name__ == '__main__':
-    # --- 1. 加载数据并创建共享内存 (无变化) ---
-    print("Loading data in the main process...")
-    hft_data = np.load(r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-14.npz")['data']
-    shm = shared_memory.SharedMemory(create=True, size=hft_data.nbytes)
-    shared_array = np.ndarray(hft_data.shape, dtype=hft_data.dtype, buffer=shm.buf)
-    np.copyto(shared_array, hft_data)
-    del hft_data
-    print(f"Data loaded into shared memory block '{shm.name}'.")
+    npz_files = [
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-09.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-10.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-11.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-12.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-13.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-14.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-15.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-16.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-17.npz",
+        r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-18.npz",
+        # r"D:\Project\DataAnalysis\YOUR-OTHER-FILE.npz",
+    ]
+
+    base_results_dir = 'backtest_results'
+    os.makedirs(base_results_dir, exist_ok=True)
 
     # --- 2. 定义参数网格 (无变化) ---
     param_grid = {
@@ -39,89 +48,109 @@ if __name__ == '__main__':
         'TAKE_PROFIT_FACTOR': [1.005, 1.010, 1.015],
         'STOP_LOSS_FACTOR': [0.990, 0.995, 1.000],
         'elapsed_interval': [100_000_000]
+        # 'CANDLE_INTERVAL_NS': [1 * 60 * 1_000_000_000],
+        # 'REJECTION_RATIO': [0.5],
+        # 'MIN_BODY_RATIO': [0.01],
+        # 'TAKE_PROFIT_FACTOR': [1.005],
+        # 'STOP_LOSS_FACTOR': [0.990],
+        # 'elapsed_interval': [100_000_000]
     }
-    # param_grid = {
-    #     'CANDLE_INTERVAL_NS': [1 * 60 * 1_000_000_000],
-    #     'REJECTION_RATIO': [0.5],
-    #     'MIN_BODY_RATIO': [0.01],
-    #     'TAKE_PROFIT_FACTOR': [1.005],
-    #     'STOP_LOSS_FACTOR': [0.990],
-    #     'elapsed_interval': [100_000_000]
-    # }
     param_combinations = list(product(*param_grid.values()))
     param_keys = list(param_grid.keys())
     param_list = [dict(zip(param_keys, combo)) for combo in param_combinations]
 
-    results_dir = 'backtest_results'
-    os.makedirs(results_dir, exist_ok=True)
-    
-    # --- 3. 为每个参数组合生成命令行指令 (核心修改) ---
-    commands = []
-    
-    # <-- 2. 对 dtype 对象进行序列化和编码
-    # 先用 pickle 序列化为字节串
-    pickled_dtype = pickle.dumps(shared_array.dtype)
-    # 再用 base64 编码为 ASCII 字符串，以便安全地在命令行传递
-    dtype_b64_str = base64.b64encode(pickled_dtype).decode('ascii')
-    
-    for i, params in enumerate(param_list):
-        params_str = json.dumps(params)
-        output_file = os.path.join(results_dir, f'result_{i}.json')
-        shape_str = ' '.join(map(str, shared_array.shape))
-        
-        cmd = [
-            'python',
-            'worker.py',
-            '--params', params_str,
-            '--shm_name', shm.name,
-            '--shape', shape_str,
-            # <-- 3. 传递编码后的 dtype 字符串
-            '--dtype_b64', dtype_b64_str,
-            '--output_file', output_file
-        ]
-        commands.append(cmd)
-
-    # --- 4. 并行执行脚本 (无变化) ---
+    returns_accumulator = {}
+    params_cache = {}
     num_processes = mp.cpu_count()
-    try:
-        print(f"Starting {len(commands)} backtests as separate processes using a pool of {num_processes} workers...")
-        with mp.Pool(processes=num_processes) as pool:
-            list(tqdm(pool.imap_unordered(run_worker_script, commands), total=len(commands)))
-        print("All backtest processes have completed.")
 
-        # --- 5. 收集和分析结果 (无变化) ---
-        print("Collecting results from files...")
-        all_results = []
-        for i in range(len(param_list)):
-            result_file = os.path.join(results_dir, f'result_{i}.json')
-            if os.path.exists(result_file):
-                try:
-                    with open(result_file, 'r') as f:
-                        data = json.load(f)
-                        if 'summary' in data:
-                            all_results.append(data)
-                        elif 'error' in data:
-                            # 打印第一个遇到的错误，以帮助调试
-                            if not any('error_printed' in globals() for _ in [1]):
+    for file_index, npz_path in enumerate(npz_files):
+        print(f"\nLoading data from {npz_path} ...")
+        if not os.path.isfile(npz_path):
+            print(f"File '{npz_path}' not found. Skipping.")
+            continue
+
+        hft_data = np.load(npz_path)['data']
+        shm = shared_memory.SharedMemory(create=True, size=hft_data.nbytes)
+        shared_array = np.ndarray(hft_data.shape, dtype=hft_data.dtype, buffer=shm.buf)
+        np.copyto(shared_array, hft_data)
+        del hft_data
+        print(f"Data loaded into shared memory block '{shm.name}'.")
+
+        pickled_dtype = pickle.dumps(shared_array.dtype)
+        dtype_b64_str = base64.b64encode(pickled_dtype).decode('ascii')
+        shape_str = ' '.join(map(str, shared_array.shape))
+
+        results_dir = os.path.join(
+            base_results_dir, f'file_{file_index}_{Path(npz_path).stem}'
+        )
+        os.makedirs(results_dir, exist_ok=True)
+
+        commands = []
+        for i, params in enumerate(param_list):
+            params_str = json.dumps(params)
+            output_file = os.path.join(results_dir, f'result_{i}.json')
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            cmd = [
+                'python',
+                'worker.py',
+                '--params', params_str,
+                '--shm_name', shm.name,
+                '--shape', shape_str,
+                '--dtype_b64', dtype_b64_str,
+                '--output_file', output_file
+            ]
+            commands.append(cmd)
+
+        try:
+            print(
+                f"Starting {len(commands)} backtests for {npz_path} "
+                f"using a pool of {num_processes} workers..."
+            )
+            with mp.Pool(processes=num_processes) as pool:
+                list(tqdm(pool.imap_unordered(run_worker_script, commands), total=len(commands)))
+            print("All backtest processes have completed.")
+
+            print("Collecting results from files...")
+            all_results = []
+            for i in range(len(param_list)):
+                result_file = os.path.join(results_dir, f'result_{i}.json')
+                if os.path.exists(result_file):
+                    try:
+                        with open(result_file, 'r') as f:
+                            data = json.load(f)
+                            if 'summary' in data:
+                                all_results.append(data)
+                            elif 'error' in data and not globals().get('error_printed', False):
                                 print(f"\n--- An error occurred in a worker ---")
                                 print(f"Params: {data['params']}")
                                 print(f"Error: {data['error']}")
                                 if 'traceback' in data:
                                     print(f"Traceback:\n{data['traceback']}")
                                 globals()['error_printed'] = True
-                except (json.JSONDecodeError) as e:
-                    print(f"Could not parse result file {result_file}: {e}")
+                    except json.JSONDecodeError as e:
+                        print(f"Could not parse result file {result_file}: {e}")
 
-        if all_results:
-            best_run = max(all_results, key=lambda item: item['summary']['Return'])
-            print("\n最佳参数:", best_run['params'])
-            print("最佳结果:", best_run['summary'])
-        else:
-            print("没有有效的回测结果可供分析。")
+            for result in all_results:
+                params = result['params']
+                params_key = tuple(params[key] for key in param_keys)
+                returns_accumulator.setdefault(params_key, []).append(result['summary']['Return'])
+                params_cache[params_key] = params
 
-    finally:
-        # --- 清理 (无变化) ---
-        print("Cleaning up shared memory...")
-        shm.close()
-        shm.unlink()
-        print("Cleanup complete.")
+        finally:
+            print("Cleaning up shared memory...")
+            shm.close()
+            shm.unlink()
+            print("Cleanup complete.")
+
+    if returns_accumulator:
+        best_key, returns = max(
+            returns_accumulator.items(),
+            key=lambda item: sum(item[1]) / len(item[1])
+        )
+        best_params = params_cache[best_key]
+        avg_return = sum(returns) / len(returns)
+        print("\n跨数据集平均Return最佳参数:", best_params)
+        print(f"平均Return: {avg_return}")
+    else:
+        print("没有有效的回测结果可供分析。")

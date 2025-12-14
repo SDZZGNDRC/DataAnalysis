@@ -66,10 +66,10 @@ def parse_covered_files(covered_files_str: str) -> List[str]:
         return []
     return [f.strip() for f in covered_files_str.split(';') if f.strip()]
 
-def generate_npz_via_subprocess(books_files: List[str], trades_files: List[str], output_npz: str, 
+def generate_npz_via_subprocess(books_files: List[str], trades_files: List[str], output_npz: str,
                                 feed_latency: float, base_latency: float, simulated_latency: Optional[float],
                                 num_processes: int, use_random_latency: bool, latency_mu: float,
-                                latency_sigma: float, random_seed: int) -> bool:
+                                latency_sigma: float, random_seed: int, tmp_dir: str = None) -> bool:
     """
     通过子进程调用 hftbacktest_okx.py 生成 npz 文件。
     """
@@ -95,6 +95,8 @@ def generate_npz_via_subprocess(books_files: List[str], trades_files: List[str],
         cmd.extend(['--latency-mu', str(latency_mu)])
         cmd.extend(['--latency-sigma', str(latency_sigma)])
         cmd.extend(['--random-seed', str(random_seed)])
+    if tmp_dir:
+        cmd.extend(['--tmp-dir', tmp_dir])
     cmd.extend(all_files)
     print(f"运行 hftbacktest_okx.py: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -106,12 +108,12 @@ def generate_npz_via_subprocess(books_files: List[str], trades_files: List[str],
 def generate_npz_via_import(books_files: List[str], trades_files: List[str], output_npz: str,
                              feed_latency: float, base_latency: float, simulated_latency: Optional[float],
                              num_processes: int, use_random_latency: bool, latency_mu: float,
-                             latency_sigma: float, random_seed: int) -> bool:
+                             latency_sigma: float, random_seed: int, tmp_dir: str = None) -> bool:
     """
     直接导入 convert 函数生成 npz 文件。
     """
     try:
-        from hftbacktest_okx import convert
+        from hftbacktest_okx_mmap import convert
     except ImportError:
         return False
     all_files = books_files + trades_files
@@ -156,7 +158,8 @@ def generate_npz_via_import(books_files: List[str], trades_files: List[str], out
             latency_mu=latency_mu,
             latency_sigma=latency_sigma,
             use_random_latency=use_random_latency,
-            random_seed=random_seed
+            random_seed=random_seed,
+            tmp_dir=tmp_dir
         )
         return True
     except Exception as e:
@@ -203,14 +206,14 @@ def process_segment(row: dict, index: int, args):
             books_files, trades_files, output_path,
             args.feed_latency, args.base_latency, args.simulated_latency,
             args.num_processes, args.use_random_latency, args.latency_mu,
-            args.latency_sigma, args.random_seed
+            args.latency_sigma, args.random_seed, args.tmp_dir
         )
     # if not success:
     #     success = generate_npz_via_subprocess(
     #         books_files, trades_files, output_path,
     #         args.feed_latency, args.base_latency, args.simulated_latency,
     #         args.num_processes, args.use_random_latency, args.latency_mu,
-    #         args.latency_sigma, args.random_seed
+    #         args.latency_sigma, args.random_seed, args.tmp_dir
     #     )
     if success:
         print(f"Segment {index}: 成功生成 {output_path}")
@@ -234,6 +237,7 @@ def main():
     parser.add_argument('--skip-existing', action='store_true', help='跳过已存在的输出文件')
     parser.add_argument('--require-trades', action='store_true', help='必须要有 trades 文件')
     parser.add_argument('--force-subprocess', action='store_true', help='强制使用子进程')
+    parser.add_argument('--tmp-dir', type=str, default=None, help='临时文件存储目录')
     args = parser.parse_args()
     
     if not os.path.exists(args.csv):
