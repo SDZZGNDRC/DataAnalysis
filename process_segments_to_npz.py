@@ -12,6 +12,8 @@ import sys
 import os
 import tempfile
 import shutil
+import py7zr
+import psutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -113,10 +115,36 @@ def generate_npz_via_import(books_files: List[str], trades_files: List[str], out
     except ImportError:
         return False
     all_files = books_files + trades_files
+    
+    # 统计所有文件解压后的总大小
+    total_uncompressed_size = 0
     for f in all_files:
         if not os.path.exists(f):
             print(f"警告: 文件不存在 {f}")
             return False
+        try:
+            with py7zr.SevenZipFile(f, mode='r') as z:
+                for info in z.list():
+                    total_uncompressed_size += info.uncompressed
+        except Exception as e:
+            print(f"无法读取 7z 文件信息 {f}: {e}")
+            return False
+
+    # 检查内存限制
+    try:
+        mem = psutil.virtual_memory()
+        available_mem = mem.available
+        # 预留一些缓冲，例如使用 90% 的可用内存
+        limit = available_mem * 0.9
+        
+        print(f"预估解压后总大小: {total_uncompressed_size / (1024**3):.2f} GB, 可用内存: {available_mem / (1024**3):.2f} GB")
+        
+        if total_uncompressed_size > limit:
+            print(f"错误: 解压后总大小超过内存限制！")
+            return False
+    except Exception as e:
+        print(f"无法获取内存信息，跳过内存检查: {e}")
+
     try:
         convert(
             all_files,
@@ -177,13 +205,13 @@ def process_segment(row: dict, index: int, args):
             args.num_processes, args.use_random_latency, args.latency_mu,
             args.latency_sigma, args.random_seed
         )
-    if not success:
-        success = generate_npz_via_subprocess(
-            books_files, trades_files, output_path,
-            args.feed_latency, args.base_latency, args.simulated_latency,
-            args.num_processes, args.use_random_latency, args.latency_mu,
-            args.latency_sigma, args.random_seed
-        )
+    # if not success:
+    #     success = generate_npz_via_subprocess(
+    #         books_files, trades_files, output_path,
+    #         args.feed_latency, args.base_latency, args.simulated_latency,
+    #         args.num_processes, args.use_random_latency, args.latency_mu,
+    #         args.latency_sigma, args.random_seed
+    #     )
     if success:
         print(f"Segment {index}: 成功生成 {output_path}")
     else:
