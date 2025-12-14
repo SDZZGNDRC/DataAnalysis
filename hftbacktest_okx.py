@@ -21,7 +21,22 @@ import sys
 import tempfile
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
+import sqlite3
 from typing import List, Optional, Tuple
+
+scan_snapshot_cache = '.scan_snapshot_cache.sqlite'
+
+def _init_cache_table():
+    """初始化缓存表，确保表存在"""
+    # timeout设置长一点，防止多进程同时抢锁时报错
+    with sqlite3.connect(scan_snapshot_cache, timeout=30.0) as conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS scan_results (
+                file_path TEXT PRIMARY KEY,
+                has_snapshot INTEGER
+            )
+        ''')
+        conn.commit()
 
 try:
     import orjson
@@ -44,6 +59,8 @@ from hftbacktest.types import (
     DEPTH_CLEAR_EVENT,
     DEPTH_SNAPSHOT_EVENT,
     TRADE_EVENT,
+    EXCH_EVENT,
+    LOCAL_EVENT,
     event_dtype,
     EVENT_ARRAY
 )
@@ -120,7 +137,9 @@ def merge_arrays_by_exch_ts(depth_data: EVENT_ARRAY, trade_data: EVENT_ARRAY) ->
         return depth_data
     
     # 创建结果数组
+    print(f'[debug] Merging {len_d} depth events and {len_t} trade events by exch_ts')
     merged = np.empty(len_d + len_t, depth_data.dtype)
+    print(f'[debug] Created merged array of size {len(merged)}')
     
     # 归并过程
     ptr_d = 0
@@ -588,50 +607,112 @@ def collect_files(patterns: List[str]) -> List[str]:
 def scan_snapshot_worker(files_chunk: List[str]) -> bool:
     """
     并行扫描worker函数，检查文件批次中是否包含snapshot。
-    
-    Args:
-        files_chunk: 要扫描的文件列表
-    
-    Returns:
-        是否找到snapshot
+    集成了SQLite缓存机制。
     """
-    temp_dir = tempfile.mkdtemp(prefix='okx_scan_')
+    # 1. 确保缓存表存在 (为了安全，每个worker启动时尝试一次，开销很小)
+    _init_cache_table()
     
+    # 2. 检查缓存
+    files_to_scan = []
+    # 使用 timeout=30.0 等待数据库锁释放，而不是直接报错
+    with sqlite3.connect(scan_snapshot_cache, timeout=30.0) as conn:
+        cursor = conn.cursor()
+        
+        # 批量查询当前chunk中所有文件的缓存状态
+        # 生成占位符 ?,?,?
+        placeholders = ','.join(['?'] * len(files_chunk))
+        query = f"SELECT file_path, has_snapshot FROM scan_results WHERE file_path IN ({placeholders})"
+        
+        try:
+            cursor.execute(query, files_chunk)
+            cached_rows = {row[0]: bool(row[1]) for row in cursor.fetchall()}
+        except sqlite3.OperationalError:
+            # 极少数情况如果数据库损坏或无法读取，降级为不使用缓存
+            cached_rows = {}
+
+    # 分析缓存结果
+    for file_path in files_chunk:
+        if file_path in cached_rows:
+            # 如果缓存中已经有 True (找到过 snapshot)，直接返回 True
+            if cached_rows[file_path]:
+                return True
+            # 如果缓存是 False，说明之前扫过没找到，跳过扫描
+            continue
+        else:
+            # 没在缓存里的，加入待扫描列表
+            files_to_scan.append(file_path)
+            
+    # 如果所有文件都在缓存里且都是False，直接返回False
+    if not files_to_scan:
+        return False
+
+    # 3. 开始扫描未缓存的文件
+    temp_dir = tempfile.mkdtemp(prefix='okx_scan_')
+    new_results = {} # 记录本次扫描的结果 {path: has_snapshot}
+    found_snapshot = False
+
     try:
-        for file_path in files_chunk:
+        for file_path in files_to_scan:
+            current_file_has_snapshot = False
             try:
                 if file_path.endswith('.7z'):
+                    # 注意：这里需要确保 extract_7z 可用
                     json_file = extract_7z(file_path, temp_dir)
                 else:
                     json_file = file_path
                 
-                # 快速检查是否包含snapshot
+                # 检查文件
                 with open(json_file, 'rb') as f:
+                    # 注意：这里需要确保 json_loads 可用
                     data = json_loads(f.read())
                 
-                for item in data['data']:
-                    if item['action'] == 'snapshot':
-                        return True
+                for item in data.get('data', []):
+                    if item.get('action') == 'snapshot':
+                        current_file_has_snapshot = True
+                        found_snapshot = True
+                        break # 找到 snapshot，跳出 item 循环
                 
-                # 清理临时文件
+                # 清理临时解压的文件
                 if file_path.endswith('.7z') and os.path.exists(json_file):
                     os.remove(json_file)
-                    
+
             except Exception as e:
                 print(f"扫描文件 {file_path} 时出错: {e}")
-                # 清理临时文件
+                # 出错时可以选择记录为 False 或者不记录(下次重试)
+                # 这里选择不记录进缓存，以便下次重试
                 if file_path.endswith('.7z'):
-                    json_files = list(Path(temp_dir).glob('*.json'))
-                    for jf in json_files:
-                        if jf.exists():
-                            jf.unlink()
+                    for jf in Path(temp_dir).glob('*.json'):
+                        jf.unlink(missing_ok=True)
                 continue
+            
+            # 记录该文件的结果
+            new_results[file_path] = current_file_has_snapshot
+            
+            # 如果找到了 snapshot，根据原始逻辑是直接返回 True
+            # 但我们需要先把已经扫描过的结果写入缓存，再返回
+            if found_snapshot:
+                break
+
     finally:
         # 清理临时目录
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-    
-    return False
+            
+        # 4. 将新扫描的结果写入缓存
+        if new_results:
+            try:
+                with sqlite3.connect(scan_snapshot_cache, timeout=30.0) as conn:
+                    # 使用 REPLACE INTO 或 INSERT OR REPLACE 处理重复主键
+                    data_to_insert = [(k, 1 if v else 0) for k, v in new_results.items()]
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO scan_results (file_path, has_snapshot) VALUES (?, ?)", 
+                        data_to_insert
+                    )
+                    conn.commit()
+            except Exception as e:
+                print(f"写入缓存失败: {e}")
+
+    return found_snapshot
 
 
 def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> Tuple[np.ndarray, bool]:
