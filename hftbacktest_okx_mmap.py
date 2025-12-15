@@ -23,6 +23,8 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 import sqlite3
 from typing import List, Optional, Tuple
+import traceback
+import json
 
 scan_snapshot_cache = '.scan_snapshot_cache.sqlite'
 
@@ -373,7 +375,7 @@ def extract_7z(filename: str, temp_dir: str) -> str:
         raise FileNotFoundError(f"在 {filename} 中未找到JSON文件")
 
     if len(json_files) > 1:
-        raise ValueError(f"在 {filename} 中找到多个JSON文件")
+        raise ValueError(f"在 {filename} 中找到多个JSON文件: {json_files}")
 
     return str(json_files[0])
 
@@ -399,17 +401,30 @@ def process_books_file(
 
     # 预估事件数量
     estimated_events = 0
-    for item in data['data']:
-        book_data = item['data'][0]
-        estimated_events += len(book_data['bids']) + len(book_data['asks'])
-        if item['action'] == 'snapshot':
-            estimated_events += 2  # 为clear事件预留空间
-    
+    try:
+        for item in data['data']:
+            if 'data' not in item:
+                # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
+                continue
+            book_data = item['data'][0]
+            estimated_events += len(book_data['bids']) + len(book_data['asks'])
+            if item['action'] == 'snapshot':
+                estimated_events += 2  # 为clear事件预留空间
+    except Exception as e:
+        error_file = 'error_' + os.path.basename(json_file)+'.json'
+        with open(error_file, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(data))
+        print(f'遇到异常{e}，相关数据已保存到{error_file}')
+        raise e
+        
     # 创建临时缓冲区
     buffer = np.empty(estimated_events, event_dtype)
     row_num = 0
 
     for item in data['data']:
+        if 'action' not in item:
+            # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
+            continue
         action = item['action']
 
         # 在找到第一个snapshot之前，跳过所有update
@@ -539,11 +554,19 @@ def process_trades_file(
     with open(json_file, 'rb') as f:
         data = json_loads(f.read())
 
+    invalid_items = 0
+    for item in data['data']:
+        if 'data' not in item:
+            invalid_items += 1
+
     # 创建缓冲区
-    buffer = np.empty(len(data['data']), event_dtype)
+    buffer = np.empty(len(data['data']) - invalid_items, event_dtype)
     row_num = 0
 
     for item in data['data']:
+        if 'data' not in item:
+            # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
+            continue
         trade_data = item['data'][0]  # data数组长度总是1
 
         ts_ms = int(trade_data['ts'])
@@ -754,6 +777,7 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool, Opti
                     
             except Exception as e:
                 print(f"处理文件 {file_path} 时出错: {e}")
+                traceback.print_exc()
                 continue
     
     finally:
@@ -812,10 +836,14 @@ def merge_event_arrays_by_exch_ts(depth_events: np.ndarray, trade_events: np.nda
     total_len = len(depth_events) + len(trade_events)
     
     # 创建临时文件用于 memmap
-    tf = tempfile.NamedTemporaryFile(prefix='okx_merge_', delete=False, dir=tmp_dir)
-    tf.close()
+    # 使用 delete=True (默认) 并保持文件对象打开，以便在 memmap 关闭时自动删除
+    tf = tempfile.NamedTemporaryFile(prefix='okx_merge_', delete=True, dir=tmp_dir)
     
-    merged = np.memmap(tf.name, dtype=depth_events.dtype, mode='w+', shape=(total_len,))
+    # 传入文件对象 tf 而不是文件名，这样 memmap 会使用文件描述符
+    merged = np.memmap(tf, dtype=depth_events.dtype, mode='w+', shape=(total_len,))
+    
+    # 将 tf 附加到 merged 对象上，确保只要 merged 存在，tf 就不会被关闭/删除
+    merged._tempfile = tf
     
     return merge_arrays_by_exch_ts(depth_events, trade_events, merged)
 
@@ -866,10 +894,14 @@ def concatenate_paths_to_memmap(path_info_list: List[Tuple[str, int]], tmp_dir: 
     
     total_len = sum(length for _, length in path_info_list)
     
-    tf = tempfile.NamedTemporaryFile(prefix='okx_concat_', delete=False, dir=tmp_dir)
-    tf.close()
+    # 使用 delete=True (默认) 并保持文件对象打开，以便在 memmap 关闭时自动删除
+    tf = tempfile.NamedTemporaryFile(prefix='okx_concat_', delete=True, dir=tmp_dir)
     
-    merged = np.memmap(tf.name, dtype=event_dtype, mode='w+', shape=(total_len,))
+    # 传入文件对象 tf 而不是文件名，这样 memmap 会使用文件描述符
+    merged = np.memmap(tf, dtype=event_dtype, mode='w+', shape=(total_len,))
+    
+    # 将 tf 附加到 merged 对象上，确保只要 merged 存在，tf 就不会被关闭/删除
+    merged._tempfile = tf
     
     offset = 0
     for path, length in path_info_list:
@@ -1069,10 +1101,11 @@ def convert(
             if count < before_count:
                 print(f"过滤掉 {before_count - count} 条早于snapshot的交易数据")
                 
-                tf = tempfile.NamedTemporaryFile(prefix='okx_trades_filtered_', delete=False, dir=tmp_dir)
-                tf.close()
+                tf = tempfile.NamedTemporaryFile(prefix='okx_trades_filtered_', delete=True, dir=tmp_dir)
                 
-                filtered_trades = np.memmap(tf.name, dtype=event_dtype, mode='w+', shape=(count,))
+                filtered_trades = np.memmap(tf, dtype=event_dtype, mode='w+', shape=(count,))
+                filtered_trades._tempfile = tf # 只要 filtered_trades 还在内存中，tf 就不会被关闭/删除
+                
                 copy_events_after_ts(trade_events, first_snapshot_ts, filtered_trades)
                 filtered_trades.flush()
                 trade_events = filtered_trades
