@@ -94,7 +94,7 @@ def count_events_after_ts(data: EVENT_ARRAY, min_ts: int) -> int:
     """计算满足条件的事件数量"""
     count = 0
     for i in range(len(data)):
-        if data[i].exch_ts > min_ts:
+        if data[i].exch_ts >= min_ts:
             count += 1
     return count
 
@@ -103,7 +103,7 @@ def copy_events_after_ts(data: EVENT_ARRAY, min_ts: int, out: EVENT_ARRAY) -> No
     """复制满足条件的事件到输出数组"""
     idx = 0
     for i in range(len(data)):
-        if data[i].exch_ts > min_ts:
+        if data[i].exch_ts >= min_ts:
             out[idx] = data[i]
             idx += 1
 
@@ -132,9 +132,9 @@ def merge_arrays_by_exch_ts(depth_data: EVENT_ARRAY, trade_data: EVENT_ARRAY, ou
         return out
     
     # 创建结果数组
-    print(f'[debug] Merging {len_d} depth events and {len_t} trade events by exch_ts')
+    # print(f'[debug] Merging {len_d} depth events and {len_t} trade events by exch_ts')
     merged = out
-    print(f'[debug] Created merged array of size {len(merged)}')
+    # print(f'[debug] Created merged array of size {len(merged)}')
     
     # 归并过程
     ptr_d = 0
@@ -403,8 +403,9 @@ def process_books_file(
     estimated_events = 0
     try:
         for item in data['data']:
-            if 'data' not in item:
+            if not item.get('data'):
                 # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
+                # 有一些数据点是这样的: {'arg': {'channel': ''}, 'data': None, 'action': ''}
                 continue
             book_data = item['data'][0]
             estimated_events += len(book_data['bids']) + len(book_data['asks'])
@@ -422,8 +423,9 @@ def process_books_file(
     row_num = 0
 
     for item in data['data']:
-        if 'action' not in item:
+        if not item.get('action', ''):
             # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
+            # 有一些数据点是这样的: {'arg': {'channel': ''}, 'data': None, 'action': ''}
             continue
         action = item['action']
 
@@ -554,46 +556,54 @@ def process_trades_file(
     with open(json_file, 'rb') as f:
         data = json_loads(f.read())
 
-    invalid_items = 0
-    for item in data['data']:
-        if 'data' not in item:
-            invalid_items += 1
+    try:
+        invalid_items = 0
+        for item in data['data']:
+            if not item.get('data'):
+                invalid_items += 1
 
-    # 创建缓冲区
-    buffer = np.empty(len(data['data']) - invalid_items, event_dtype)
-    row_num = 0
+        # 创建缓冲区
+        buffer = np.empty(len(data['data']) - invalid_items, event_dtype)
+        row_num = 0
 
-    for item in data['data']:
-        if 'data' not in item:
-            # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
-            continue
-        trade_data = item['data'][0]  # data数组长度总是1
+        for item in data['data']:
+            if not item.get('data'):
+                # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
+                # 有一些数据点是这样的: {'arg': {'channel': ''}, 'data': None}
+                continue
+            trade_data = item['data'][0]  # data数组长度总是1
 
-        ts_ms = int(trade_data['ts'])
-        exch_ts = ts_ms * 1_000_000  # 转换为纳秒
+            ts_ms = int(trade_data['ts'])
+            exch_ts = ts_ms * 1_000_000  # 转换为纳秒
 
-        # 检查是否有localTs
-        if 'localTs' in item:
-            local_ts = int(item['localTs']) * 1_000_000  # 转换为纳秒
-        else:
-            local_ts = exch_ts + int(feed_latency)
+            # 检查是否有localTs
+            if 'localTs' in item:
+                local_ts = int(item['localTs']) * 1_000_000  # 转换为纳秒
+            else:
+                local_ts = exch_ts + int(feed_latency)
 
-        price = float(trade_data['px'])
-        qty = float(trade_data['sz'])
-        side = trade_data['side']
+            price = float(trade_data['px'])
+            qty = float(trade_data['sz'])
+            side = trade_data['side']
 
-        # 交易发起方的side
-        buffer[row_num] = (
-            TRADE_EVENT | (BUY_EVENT if side == 'buy' else SELL_EVENT),
-            exch_ts,
-            local_ts,
-            price,
-            qty,
-            0,
-            0,
-            0
-        )
-        row_num += 1
+            # 交易发起方的side
+            buffer[row_num] = (
+                TRADE_EVENT | (BUY_EVENT if side == 'buy' else SELL_EVENT),
+                exch_ts,
+                local_ts,
+                price,
+                qty,
+                0,
+                0,
+                0
+            )
+            row_num += 1
+    except Exception as e:
+        error_file = 'error_' + os.path.basename(json_file)+'.json'
+        with open(error_file, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(data))
+        print(f'遇到异常{e}，相关数据已保存到{error_file}')
+        raise e
 
     return buffer[:row_num]
 

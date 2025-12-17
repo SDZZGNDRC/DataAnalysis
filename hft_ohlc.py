@@ -81,7 +81,7 @@ def run_backtest(data_list, args, ohlc_data, interval_ns):
             .trading_value_fee_model(0.0008, 0.0010)
             .tick_size(args.tick_size)
             .lot_size(args.lot_size)
-            .last_trades_capacity(1_000_000)
+            .last_trades_capacity(100_000_000)
             # 【非常重要】为了生成 OHLC，必须开启 last_trades_capacity
             # 如果设为 0，hbt.last_trades(0) 将永远为空。
     )
