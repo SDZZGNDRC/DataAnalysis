@@ -1,136 +1,83 @@
-from numba import njit
-import numpy as np
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+依次解压给定路径列表中的 7z 文件，并把解压出的所有 json 文件解析成 Python 对象返回。
+"""
 
-from hftbacktest import BacktestAsset, HashMapMarketDepthBacktest, BUY_EVENT
+from __future__ import annotations
+import os
+import json
+import shutil
+import tempfile
+from pathlib import Path
+from typing import List, Dict, Any
 
-@njit
-def print_bbo(hbt):
-    # Iterating until hftbacktest reaches the end of data.
-    # Elapses 60-sec every iteration.
-    # Time unit is the same as data's timestamp's unit.
-    # Timestamp of the sample data is in nanoseconds.
-    while hbt.elapse(60 * 1e9) == 0:
-        # Gets the market depth for the first asset.
-        depth = hbt.depth(0)
+try:
+    import py7zr
+except ImportError:
+    raise SystemExit("请先 pip install py7zr")
 
-        # Prints the best bid and the best offer.
-        if not np.isnan(np.round(depth.best_bid, 1)):
-            print(
-                'current_timestamp:', hbt.current_timestamp,
-                ', best_bid:', np.round(depth.best_bid, 1),
-                ', best_bid_qty:', depth.best_bid_qty,
-                ', best_ask:', np.round(depth.best_ask, 1),
-                ', best_ask_qty:', depth.best_ask_qty,
-            )
-    
-    return True
 
-@njit
-def print_3depth(hbt: HashMapMarketDepthBacktest):
-    while hbt.elapse(60 * 1e9) == 0:
-        print('current_timestamp:', hbt.current_timestamp)
+def extract_and_parse_json(seven_z_list: List[str | Path]) -> List[Dict[str, Any]]:
+    """
+    参数
+    ----
+    seven_z_list: 7z 文件路径列表
 
-        # Gets the market depth for the first asset, in the same order as when you created the backtest.
-        depth = hbt.depth(0)
+    返回
+    ----
+    List[Dict[str, Any]]: 所有 JSON 文件解析后的对象列表
+    """
+    all_json_objs: List[Dict[str, Any]] = []
 
-        # a key of bid_depth or ask_depth is price in ticks.
-        # (integer) price_tick = price / tick_size
-        i = 0
-        for tick_price in range(depth.best_ask_tick, depth.best_ask_tick + 100):
-            qty = depth.ask_qty_at_tick(tick_price)
-            if qty > 0:
-                print(
-                    'ask: ',
-                    qty,
-                    '@',
-                    np.round(tick_price * depth.tick_size, 1)
-                )
-
-                i += 1
-                if i == 3:
-                    break
-        i = 0
-        for tick_price in range(depth.best_bid_tick, max(depth.best_bid_tick - 100, 0), -1):
-            qty = depth.bid_qty_at_tick(tick_price)
-            if qty > 0:
-                print(
-                    'bid: ',
-                    qty,
-                    '@',
-                    np.round(tick_price * depth.tick_size, 1)
-                )
-
-                i += 1
-                if i == 3:
-                    break
-    return True
-
-@njit
-def plot_bbo(hbt, local_timestamp, best_bid, best_ask):
-    while hbt.elapse(1 * 1e9) == 0:
-        # Records data points
-        local_timestamp.append(hbt.current_timestamp)
-
-        depth = hbt.depth(0)
-
-        best_bid.append(depth.best_bid)
-        best_ask.append(depth.best_ask)
-    return True
-
-@njit
-def print_trades(hbt):
-    while hbt.elapse(60 * 1e9) == 0:
-
-        # Gets the last trades occurring in the market, not the trades of our orders.
-        last_trades = hbt.last_trades(0)
-        
-        if len(last_trades) == 0:
+    for z_file in map(Path, seven_z_list):
+        if not z_file.is_file():
+            print(f"[WARN] 文件不存在，跳过: {z_file}")
             continue
-        
-        print('-------------------------------------------------------------------------------')
-        print('current_timestamp:', hbt.current_timestamp)
-        
-        num = 0
-        for last_trade in last_trades:
-            if num > 10:
-                print('...')
-                break
-            print(
-                'exch_timestamp:',
-                last_trade.exch_ts,
-                'buy' if (last_trade.ev & BUY_EVENT) == BUY_EVENT else 'sell',
-                last_trade.qty,
-                '@',
-                last_trade.px
-            )
-            num += 1
 
-        # To prevent accumulating all last trades, which may cause a slowdown,
-        # clear_last_trades needs to be called.
-        # After this, accessing `last_trades` will cause a crash.
-        hbt.clear_last_trades(0)
-    return True
+        # 用临时目录存放解压内容，with 块结束后自动删除
+        with tempfile.TemporaryDirectory(prefix=z_file.stem + "_") as tmpdir:
+            print(f"[INFO] 正在解压 {z_file.name} -> {tmpdir}")
+            try:
+                with py7zr.SevenZipFile(z_file, mode="r") as z:
+                    z.extractall(path=tmpdir)
+            except Exception as e:
+                print(f"[ERROR] 解压失败 {z_file}: {e}")
+                continue
 
-# trades_data = np.load(r"D:\Project\DataAnalysis\OKX-Trades-BTC-USDT-2025-03-02.npz")['data']
-hft_data = np.load(r"D:\Project\DataAnalysis\OKX-HFT-BTC-USDT-2025-03-02.npz")['data']
+            # 递归找出所有 json 文件
+            json_files = list(Path(tmpdir).rglob("*.json"))
+            if not json_files:
+                print(f"[WARN] 压缩包 {z_file.name} 中未找到 json 文件")
+                continue
 
-# print('trades_data: ', trades_data)
-print('hft_data: ', hft_data)
+            for jf in json_files:
+                try:
+                    with jf.open(encoding="utf-8") as fj:
+                        data = json.load(fj)
+                        # 如果你想保留来源信息，可以 data.update({"_src": str(jf)})
+                        all_json_objs.append(data)
+                except Exception as e:
+                    print(f"[ERROR] 解析 JSON 失败 {jf}: {e}")
+                    continue
 
-asset = (
-    BacktestAsset()
-        .data([hft_data])
-        .linear_asset(1.0)
-        .constant_order_latency(10_000_000, 10_000_000)
-        .risk_adverse_queue_model()
-        .no_partial_fill_exchange()
-        .trading_value_fee_model(0.0002, 0.0007)
-        .tick_size(0.1)
-        .lot_size(0.001)
-        .last_trades_capacity(1000000)
-)
+    return all_json_objs
 
-hbt = HashMapMarketDepthBacktest([asset])
 
-print_bbo(hbt)
-# print_trades(hbt)
+# 把你给出的列表直接粘过来即可
+seven_z_files = ['E:\\tmp\\OKX-Books-BTC-USDT-400-2025-05\\OKX-Books-BTC-USDT-400\\2025-05-22\\OKX-Books-BTC-USDT-400-1747927967491-1747928492527.7z', 'E:\\tmp\\OKX-Books-BTC-USDT-400-2025-05\\OKX-Books-BTC-USDT-400\\2025-05-22\\OKX-Books-BTC-USDT-400-1747928492527-1747929046522.7z', 'E:\\tmp\\OKX-Books-BTC-USDT-400-2025-05\\OKX-Books-BTC-USDT-400\\2025-05-22\\OKX-Books-BTC-USDT-400-1747929046522-1747929636536.7z', 'E:\\tmp\\OKX-Books-BTC-USDT-400-2025-05\\OKX-Books-BTC-USDT-400\\2025-05-22\\OKX-Books-BTC-USDT-400-1747929636537-1748615902590.7z']
+
+result = extract_and_parse_json(seven_z_files)
+print(f"\n[SUMMARY] 共解析出 {len(result)} 个 JSON 对象")
+
+start_ts = '1747927963504'
+end_ts = '1747930038404'
+
+for obj in result:
+    obj_start_ts = min(map(lambda x: x['data'][0]['ts'], obj['data']))
+    obj_end_ts = max(map(lambda x: x['data'][0]['ts'], obj['data']))
+    
+    if obj_end_ts < start_ts or obj_start_ts > end_ts:
+        print("发现不在时间范围内的对象")
+        exit(-1)
+print("所有对象均在时间范围内")

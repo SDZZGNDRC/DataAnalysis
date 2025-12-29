@@ -108,7 +108,8 @@ def generate_npz_via_subprocess(books_files: List[str], trades_files: List[str],
 def generate_npz_via_import(books_files: List[str], trades_files: List[str], output_npz: str,
                              feed_latency: float, base_latency: float, simulated_latency: Optional[float],
                              num_processes: int, use_random_latency: bool, latency_mu: float,
-                             latency_sigma: float, random_seed: int, tmp_dir: str = None) -> bool:
+                             latency_sigma: float, random_seed: int, tmp_dir: str = None,
+                             start_ts: int = None, end_ts: int = None) -> bool:
     """
     直接导入 convert 函数生成 npz 文件。
     """
@@ -159,7 +160,9 @@ def generate_npz_via_import(books_files: List[str], trades_files: List[str], out
             latency_sigma=latency_sigma,
             use_random_latency=use_random_latency,
             random_seed=random_seed,
-            tmp_dir=tmp_dir
+            tmp_dir=tmp_dir,
+            start_ts=start_ts,
+            end_ts=end_ts,
         )
         return True
     except Exception as e:
@@ -206,7 +209,8 @@ def process_segment(row: dict, index: int, args):
             books_files, trades_files, output_path,
             args.feed_latency, args.base_latency, args.simulated_latency,
             args.num_processes, args.use_random_latency, args.latency_mu,
-            args.latency_sigma, args.random_seed, args.tmp_dir
+            args.latency_sigma, args.random_seed, args.tmp_dir,
+            start_ts, end_ts
         )
     # if not success:
     #     success = generate_npz_via_subprocess(

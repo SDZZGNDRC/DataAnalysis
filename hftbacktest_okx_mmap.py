@@ -73,37 +73,42 @@ INT64_MAX = np.int64(np.iinfo(np.int64).max)
 
 
 @njit
-def find_first_snapshot_ts(data: EVENT_ARRAY) -> int:
+def find_first_snapshot_ts_and_max_ts(data: EVENT_ARRAY) -> (int,int):
     """
-    找到第一个snapshot事件的交易所时间戳。
+    找到第一个snapshot事件的交易所时间戳和最大的一个交易所时间戳。
     
     Args:
         data: 事件数据数组
     
     Returns:
         第一个snapshot的exch_ts，如果没有找到则返回-1
+        最大的交易所时间戳
     """
+    max_exch_ts = -1
+    first_snapshot_exch_ts = -1
     for i in range(len(data)):
-        if data[i].ev & DEPTH_SNAPSHOT_EVENT:
-            return data[i].exch_ts
-    return -1
+        if (data[i].ev & DEPTH_SNAPSHOT_EVENT) and first_snapshot_exch_ts == -1:
+            first_snapshot_exch_ts = data[i].exch_ts
+        if data[i].exch_ts > max_exch_ts:
+            max_exch_ts = data[i].exch_ts
+    return first_snapshot_exch_ts, max_exch_ts
 
 
 @njit
-def count_events_after_ts(data: EVENT_ARRAY, min_ts: int) -> int:
+def count_events_within_ts(data: EVENT_ARRAY, min_ts: int, max_ts: int) -> int:
     """计算满足条件的事件数量"""
     count = 0
     for i in range(len(data)):
-        if data[i].exch_ts >= min_ts:
+        if max_ts >= data[i].exch_ts >= min_ts:
             count += 1
     return count
 
 @njit
-def copy_events_after_ts(data: EVENT_ARRAY, min_ts: int, out: EVENT_ARRAY) -> None:
+def copy_events_within_ts(data: EVENT_ARRAY, min_ts: int, max_ts: int, out: EVENT_ARRAY) -> None:
     """复制满足条件的事件到输出数组"""
     idx = 0
     for i in range(len(data)):
-        if data[i].exch_ts >= min_ts:
+        if max_ts >= data[i].exch_ts >= min_ts:
             out[idx] = data[i]
             idx += 1
 
@@ -383,7 +388,9 @@ def extract_7z(filename: str, temp_dir: str) -> str:
 def process_books_file(
     json_file: str,
     feed_latency: float,
-    found_snapshot: bool
+    found_snapshot: bool,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None
 ) -> Tuple[np.ndarray, bool]:
     """
     处理Books（深度数据）文件。
@@ -392,6 +399,8 @@ def process_books_file(
         json_file: JSON文件路径
         feed_latency: 喂送延迟（纳秒）
         found_snapshot: 是否已找到snapshot
+        start_ts: 开始时间戳过滤
+        end_ts: 结束时间戳过滤
 
     Returns:
         Tuple of (events_array, found_snapshot)
@@ -438,7 +447,24 @@ def process_books_file(
 
         book_data = item['data'][0]  # data数组长度总是1
         ts_ms = int(book_data['ts'])
+        # TODO: 这里过滤掉不在[start_ts, end_ts]范围内的数据
         exch_ts = ts_ms * 1_000_000  # 转换为纳秒
+
+        if start_ts is not None and ts_ms < start_ts:
+            # print(f"Skipping event before start_ts {start_ts}: ts_ms={ts_ms}")
+            # print(f"start_ts: {start_ts}, end_ts: {end_ts}")
+            # exit(-1)
+            continue
+        if end_ts is not None and ts_ms > end_ts:
+            # print(f"Skipping event after end_ts {end_ts}: ts_ms={ts_ms}")
+            # print(f"start_ts: {start_ts}, end_ts: {end_ts}")
+            # exit(-1)
+            continue
+
+        print(f"Processing event: {json_file}, ts_ms={ts_ms}")
+
+        if exch_ts == 1748622785484000000:
+            print(f'{json_file} ====> {book_data}')
 
         # 检查是否有localTs
         if 'localTs' in item:
@@ -541,7 +567,9 @@ def process_books_file(
 
 def process_trades_file(
     json_file: str,
-    feed_latency: float
+    feed_latency: float,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None
 ) -> np.ndarray:
     """
     处理Trades（交易数据）文件。
@@ -549,6 +577,8 @@ def process_trades_file(
     Args:
         json_file: JSON文件路径
         feed_latency: 喂送延迟（纳秒）
+        start_ts: 开始时间戳过滤
+        end_ts: 结束时间戳过滤
 
     Returns:
         events_array
@@ -575,6 +605,14 @@ def process_trades_file(
 
             ts_ms = int(trade_data['ts'])
             exch_ts = ts_ms * 1_000_000  # 转换为纳秒
+            
+            if start_ts is not None and exch_ts < start_ts:
+                continue
+            if end_ts is not None and exch_ts > end_ts:
+                continue
+
+            if exch_ts == 1748622785484000000:
+                print(f'{json_file} ====> {trade_data}')
 
             # 检查是否有localTs
             if 'localTs' in item:
@@ -741,17 +779,17 @@ def scan_snapshot_worker(files_chunk: List[str]) -> bool:
     return found_snapshot
 
 
-def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool, Optional[str]]) -> Tuple[Optional[str], int, bool]:
+def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool, Optional[str], Optional[int], Optional[int]]) -> Tuple[Optional[str], int, bool]:
     """
     多进程worker函数，处理一批文件。
     
     Args:
-        file_info_chunk: 包含(文件列表, 数据类型, feed_latency, found_snapshot, tmp_dir)的元组
+        file_info_chunk: 包含(文件列表, 数据类型, feed_latency, found_snapshot, tmp_dir, start_ts, end_ts)的元组
     
     Returns:
         Tuple of (memmap_file_path, length, found_snapshot)
     """
-    files, data_type, feed_latency, found_snapshot, tmp_dir = file_info_chunk
+    files, data_type, feed_latency, found_snapshot, tmp_dir, start_ts, end_ts = file_info_chunk
     
     if not files:
         return None, 0, found_snapshot
@@ -771,10 +809,10 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool, Opti
                 
                 if data_type == 'Books':
                     events, found_snapshot = process_books_file(
-                        json_file, feed_latency, found_snapshot
+                        json_file, feed_latency, found_snapshot, start_ts, end_ts
                     )
                 elif data_type == 'Trades':
-                    events = process_trades_file(json_file, feed_latency)
+                    events = process_trades_file(json_file, feed_latency, start_ts, end_ts)
                 else:
                     continue
                 
@@ -796,6 +834,9 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool, Opti
             shutil.rmtree(temp_dir)
     
     if not all_events:
+        print(f'------> Worker没有处理到任何事件数据。')
+        print(f'file_info_chunk={file_info_chunk}')
+        # exit(-1)
         return None, 0, found_snapshot
     
     # 合并所有事件
@@ -937,7 +978,9 @@ def convert(
     latency_sigma: float = 1.0,
     use_random_latency: bool = False,
     random_seed: int = 42,
-    tmp_dir: Optional[str] = None
+    tmp_dir: Optional[str] = None,
+    start_ts = None,
+    end_ts = None,
 ) -> NDArray:
     """
     转换OKX市场数据文件为HftBacktest兼容格式（支持多进程）。
@@ -955,7 +998,9 @@ def convert(
         latency_sigma: 对数正态分布的标准差参数（用于随机延迟）
         use_random_latency: 是否使用随机延迟而不是固定延迟
         random_seed: 随机数生成器的种子值
-        tmp_dir: 临时文件存储目录
+        tmp_dir: 临时文件存储目录,
+        start_ts: 可选的开始时间戳过滤
+        end_ts: 可选的结束时间戳过滤
 
     Returns:
         与HftBacktest兼容的转换后数据
@@ -1007,7 +1052,7 @@ def convert(
         batches = []
         for i in range(0, len(file_list), batch_size):
             batch = file_list[i:i + batch_size]
-            batches.append((batch, data_type, feed_latency, False, tmp_dir))
+            batches.append((batch, data_type, feed_latency, False, tmp_dir, start_ts, end_ts))
         return batches
 
     # 创建批次
@@ -1049,8 +1094,8 @@ def convert(
         print("找到snapshot，开始并行处理...")
         
         updated_batches = []
-        for batch_files, data_type, feed_lat, _, _ in books_batches:
-            updated_batches.append((batch_files, data_type, feed_lat, True, tmp_dir))
+        for batch_files, data_type, feed_lat, _, _, s_ts, e_ts in books_batches:
+            updated_batches.append((batch_files, data_type, feed_lat, True, tmp_dir, s_ts, e_ts))
         
         if num_processes > 1:
             with Pool(num_processes) as pool:
@@ -1090,7 +1135,9 @@ def convert(
     print("合并深度数据...")
     if depth_path_infos:
         depth_events = concatenate_paths_to_memmap(depth_path_infos, tmp_dir=tmp_dir)
-        first_snapshot_ts = find_first_snapshot_ts(depth_events)
+        first_snapshot_ts, max_exch_ts = find_first_snapshot_ts_and_max_ts(depth_events)
+        print(f"first_snapshot_ts=\t{first_snapshot_ts}")
+        print(f"\tmax_exch_ts=\t{max_exch_ts}")
         # TODO: 这里应该删除早于第一个snapshot的所有订单簿更新的。
         if first_snapshot_ts >= 0:
             print(f"第一个snapshot时间戳: {first_snapshot_ts}")
@@ -1106,7 +1153,7 @@ def convert(
             before_count = len(trade_events)
             
             # 使用memmap进行过滤
-            count = count_events_after_ts(trade_events, first_snapshot_ts)
+            count = count_events_within_ts(trade_events, first_snapshot_ts, max_exch_ts)
             
             if count < before_count:
                 print(f"过滤掉 {before_count - count} 条早于snapshot的交易数据")
@@ -1116,7 +1163,7 @@ def convert(
                 filtered_trades = np.memmap(tf, dtype=event_dtype, mode='w+', shape=(count,))
                 filtered_trades._tempfile = tf # 只要 filtered_trades 还在内存中，tf 就不会被关闭/删除
                 
-                copy_events_after_ts(trade_events, first_snapshot_ts, filtered_trades)
+                copy_events_within_ts(trade_events, first_snapshot_ts, max_exch_ts, filtered_trades)
                 filtered_trades.flush()
                 trade_events = filtered_trades
                 
@@ -1177,6 +1224,13 @@ def convert(
     validate_event_order(data)
 
     # TODO: 这里要将data拆分为多个npz文件，否则hftbacktest读取时会导致内存溢出
+
+    # 检查local_ts和exch_tx
+    print(f"LocalTs: {tmp['local_ts'][0]} --> {tmp['local_ts'][-1]}")
+    print(f"ExchTs:  {tmp['exch_ts'][0]} --> {tmp['exch_ts'][-1]}")
+    print(f"Max LocalTs: {tmp['local_ts'].max()}")
+    print(f"Max ExchTs: {tmp['exch_ts'].max()}")
+    print(f"---> {tmp[tmp['exch_ts'].argmax()]}")
 
     if output_filename is not None:
         print(f"保存到 {output_filename}")
