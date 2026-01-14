@@ -461,10 +461,9 @@ def process_books_file(
             # exit(-1)
             continue
 
-        print(f"Processing event: {json_file}, ts_ms={ts_ms}")
 
-        if exch_ts == 1748622785484000000:
-            print(f'{json_file} ====> {book_data}')
+        # if exch_ts == 1748622785484000000:
+        #     print(f'{json_file} ====> {book_data}')
 
         # 检查是否有localTs
         if 'localTs' in item:
@@ -606,9 +605,9 @@ def process_trades_file(
             ts_ms = int(trade_data['ts'])
             exch_ts = ts_ms * 1_000_000  # 转换为纳秒
             
-            if start_ts is not None and exch_ts < start_ts:
+            if start_ts is not None and ts_ms < start_ts:
                 continue
-            if end_ts is not None and exch_ts > end_ts:
+            if end_ts is not None and ts_ms > end_ts:
                 continue
 
             if exch_ts == 1748622785484000000:

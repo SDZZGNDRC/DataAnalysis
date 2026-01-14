@@ -1,234 +1,31 @@
-# This file may be used to create an environment using:
-# $ conda create --name <env> --file <this file>
-# platform: win-64
-# created-by: conda 25.1.1
-_libavif_api=1.3.0=h57928b3_0
-aiohappyeyeballs=2.6.1=pypi_0
-aiohttp=3.12.15=pypi_0
-aiohttp-cors=0.8.1=pypi_0
-aiosignal=1.4.0=pypi_0
-annotated-types=0.7.0=pypi_0
-aom=3.9.1=he0c23c2_0
-arrow-cpp=19.0.0=h82e8c66_4
-asttokens=3.0.0=pyhd8ed1ab_1
-attrs=25.3.0=pypi_0
-aws-c-auth=0.9.0=hd490b63_15
-aws-c-cal=0.9.2=hd8a8e38_0
-aws-c-common=0.12.3=h2466b09_0
-aws-c-compression=0.3.1=h5d0e663_5
-aws-c-event-stream=0.5.5=ha416645_0
-aws-c-http=0.10.2=h81282ae_2
-aws-c-io=0.20.1=hf7624bd_1
-aws-c-mqtt=0.13.1=h5c1ae27_3
-aws-c-s3=0.8.3=h1e843c7_0
-aws-c-sdkutils=0.2.4=h5d0e663_0
-aws-checksums=0.2.7=h5d0e663_1
-aws-crt-cpp=0.32.10=h8abd1a4_2
-aws-sdk-cpp=1.11.528=hd293286_1
-boost-cpp=1.85.0=h6f18f0d_2
-brotli=1.0.9=hcfcfb64_9
-brotli-bin=1.0.9=hcfcfb64_9
-bzip2=1.0.8=h2466b09_7
-c-ares=1.34.5=h2466b09_0
-ca-certificates=2025.8.3=h4c7d964_0
-cachetools=5.5.2=pypi_0
-cairo=1.16.0=h85cdd14_6
-certifi=2025.8.3=pypi_0
-charset-normalizer=3.4.2=pypi_0
-click=8.2.1=pypi_0
-colorama=0.4.6=pyhd8ed1ab_1
-colorful=0.5.7=pypi_0
-comm=0.2.3=pyhe01879c_0
-contourpy=1.3.3=py311h3fd045d_1
-cos-python-sdk-v5=1.9.38=pypi_0
-cpython=3.11.13=py311hd8ed1ab_0
-crcmod=1.7=pypi_0
-cycler=0.12.1=pyhd8ed1ab_1
-dav1d=1.2.1=hcfcfb64_0
-debugpy=1.8.15=py311h5dfdfe8_0
-decorator=5.2.1=pyhd8ed1ab_0
-distlib=0.4.0=pypi_0
-exceptiongroup=1.3.0=pyhd8ed1ab_0
-executing=2.2.0=pyhd8ed1ab_0
-expat=2.7.1=h8ddb27b_0
-filelock=3.18.0=pypi_0
-fontconfig=2.14.1=hb33846d_3
-fonttools=4.59.0=py311h3f79411_0
-freeglut=3.4.0=h8a1e904_1
-freetype=2.13.3=h0620614_0
-fribidi=1.0.10=h8d14728_0
-frozenlist=1.7.0=pypi_0
-gflags=2.2.2=he0c23c2_1005
-glog=0.5.0=h4797de2_0
-google-api-core=2.25.1=pypi_0
-google-auth=2.40.3=pypi_0
-googleapis-common-protos=1.70.0=pypi_0
-graphite2=1.3.14=hac47afa_1
-grpcio=1.74.0=pypi_0
-harfbuzz=10.2.0=he2f9f60_1
-icu=73.2=h63175ca_0
-idna=3.10=pypi_0
-importlib-metadata=8.7.0=pyhe01879c_1
-intel-openmp=2024.2.1=h57928b3_1083
-ipykernel=6.30.1=pyh3521513_0
-ipython=9.4.0=pyh6be1c34_0
-ipython_pygments_lexers=1.1.1=pyhd8ed1ab_0
-jedi=0.19.2=pyhd8ed1ab_1
-jpeg=9e=hcfcfb64_3
-jsonschema=4.25.0=pypi_0
-jsonschema-specifications=2025.4.1=pypi_0
-jupyter_client=8.6.3=pyhd8ed1ab_1
-jupyter_core=5.8.1=pyh5737063_0
-kiwisolver=1.4.8=py311h3fd045d_1
-krb5=1.21.3=hdf4eb48_0
-lcms2=2.16=h62be587_1
-lerc=4.0.0=h6470a55_1
-libabseil=20250127.0=cxx17_h4eb7d71_0
-libavif=1.3.0=hf2698fe_0
-libavif16=1.3.0=hf2698fe_0
-libblas=3.9.0=32_h641d27c_mkl
-libboost=1.85.0=h9a677ad_2
-libboost-devel=1.85.0=h91493d7_2
-libboost-headers=1.85.0=h57928b3_2
-libbrotlicommon=1.0.9=hcfcfb64_9
-libbrotlidec=1.0.9=hcfcfb64_9
-libbrotlienc=1.0.9=hcfcfb64_9
-libcblas=3.9.0=32_h5e41251_mkl
-libclang13=14.0.6=default_h8e68704_2
-libcurl=8.14.1=h2300eb9_1
-libdeflate=1.22=h2466b09_0
-libevent=2.1.12=h3671451_1
-libffi=3.4.6=h537db12_1
-libglib=2.84.2=h405b238_0
-libgrpc=1.71.0=hf4237ab_0
-libhwloc=2.12.1=default_h88281d1_1000
-libiconv=1.18=h135ad9c_1
-libkrb5=1.21.3=hcb72d8e_3
-liblapack=3.9.0=32_h1aa476e_mkl
-liblzma=5.8.1=h2466b09_2
-liblzma-devel=5.8.1=h2466b09_2
-libpng=1.6.39=h8cc25b3_0
-libpq=17.4=h4a159e6_2
-libprotobuf=5.29.3=h65a231f_1
-libre2-11=2024.07.02=hd248061_3
-libsodium=1.0.20=hc70643c_0
-libsqlite=3.50.4=hf5d6505_0
-libssh2=1.11.1=h2addb87_0
-libthrift=0.15.0=h4364b78_2
-libtiff=4.7.0=h404307b_0
-libwebp-base=1.6.0=h4d5522a_0
-libwinpthread=12.0.0.r4.gg4f2fc60ca=h57928b3_9
-libxml2=2.13.8=h866ff63_0
-libxslt=1.1.43=h25c3957_0
-libzlib=1.2.13=h2466b09_6
-lz4-c=1.9.4=hcfcfb64_0
-matplotlib=3.10.1=py311h1ea47a8_0
-matplotlib-base=3.10.1=py311h8f1b1e4_0
-matplotlib-inline=0.1.7=pyhd8ed1ab_1
-minizip=4.0.3=hb68bac4_0
-mkl=2024.2.2=h66d3029_15
-msgpack=1.1.1=pypi_0
-multidict=6.6.3=pypi_0
-munkres=1.1.4=pyhd8ed1ab_1
-nest-asyncio=1.6.0=pyhd8ed1ab_1
-numpy=2.3.2=py311h80b3fa1_0
-opencensus=0.11.4=pypi_0
-opencensus-context=0.1.3=pypi_0
-openjpeg=2.5.2=h9b5d1b5_1
-openssl=3.5.3=h725018a_1
-opentelemetry-api=1.36.0=pypi_0
-opentelemetry-exporter-prometheus=0.57b0=pypi_0
-opentelemetry-proto=1.36.0=pypi_0
-opentelemetry-sdk=1.36.0=pypi_0
-opentelemetry-semantic-conventions=0.57b0=pypi_0
-orc=2.1.1=hd1c1d5c_0
-packaging=25.0=pyh29332c3_1
-pandas=2.3.1=py311h11fd7f3_0
-parso=0.8.4=pyhd8ed1ab_1
-patsy=1.0.1=pyhd8ed1ab_1
-pcre2=10.42=h0ff8eda_1
-pickleshare=0.7.5=pyhd8ed1ab_1004
-pillow=11.3.0=py311hb328d1f_0
-pip=25.2=pyh8b19718_0
-pixman=0.46.4=hc614b68_0
-platformdirs=4.3.8=pyhe01879c_0
-prometheus-client=0.22.1=pypi_0
-prompt-toolkit=3.0.51=pyha770c72_0
-propcache=0.3.2=pypi_0
-proto-plus=1.26.1=pypi_0
-protobuf=6.31.1=pypi_0
-psutil=7.0.0=py311he736701_0
-pure_eval=0.2.3=pyhd8ed1ab_1
-py-spy=0.4.1=pypi_0
-pyarrow=19.0.0=py311h5da7b33_1
-pyasn1=0.6.1=pypi_0
-pyasn1-modules=0.4.2=pypi_0
-pycryptodome=3.23.0=pypi_0
-pydantic=2.11.7=pypi_0
-pydantic-core=2.33.2=pypi_0
-pygments=2.19.2=pyhd8ed1ab_0
-pyparsing=3.2.3=pyhe01879c_2
-pyside6=6.7.3=py311h28b127d_1
-python=3.11.13=h981015d_0
-python-dateutil=2.9.0.post0=pyhe01879c_2
-python-tzdata=2025.2=pyhd8ed1ab_0
-python_abi=3.11=2_cp311
-pytz=2025.2=pyhd8ed1ab_0
-pywin32=311=py311hefeebc8_0
-pyyaml=6.0.2=pypi_0
-pyzmq=27.0.1=py311ha362a94_0
-qhull=2020.2=hc790b64_5
-qtbase=6.7.3=hd088775_4
-qtdeclarative=6.7.3=h885b0b7_1
-qtshadertools=6.7.3=h885b0b7_1
-qtsvg=6.7.3=h9d4b640_1
-qttools=6.7.3=hcb596f7_1
-qtwebchannel=6.7.3=h885b0b7_1
-qtwebengine=6.7.3=h3869032_1
-qtwebsockets=6.7.3=h885b0b7_1
-rav1e=0.7.1=ha073cba_3
-ray=2.48.0=pypi_0
-re2=2024.07.02=haf4117d_3
-referencing=0.36.2=pypi_0
-requests=2.32.4=pypi_0
-rpds-py=0.26.0=pypi_0
-rsa=4.9.1=pypi_0
-scipy=1.16.0=py311h0e21e1b_0
-seaborn=0.13.2=hd8ed1ab_3
-seaborn-base=0.13.2=pyhd8ed1ab_3
-setuptools=80.9.0=pyhff2d567_0
-six=1.17.0=pyhe01879c_1
-smart-open=7.3.0.post1=pypi_0
-snappy=1.2.2=h7fa0ca8_0
-sqlite=3.50.4=hdb435a2_0
-stack_data=0.6.3=pyhd8ed1ab_1
-statsmodels=0.14.5=py311h17033d2_0
-svt-av1=3.0.2=he0c23c2_0
-tbb=2021.7.0=h91493d7_0
-tk=8.6.14=h5e9d12e_1
-tornado=6.5.1=py311he736701_0
-tqdm=4.67.1=pyhd8ed1ab_1
-traitlets=5.14.3=pyhd8ed1ab_1
-typing-inspection=0.4.1=pypi_0
-typing_extensions=4.14.1=pyhe01879c_0
-tzdata=2025b=h04d1e81_0
-ucrt=10.0.22621.0=h57928b3_1
-unicodedata2=16.0.0=py311he736701_0
-urllib3=2.5.0=pypi_0
-utf8proc=2.6.1=h2bbff1b_1
-vc=14.3=h2df5915_10
-vc14_runtime=14.44.35208=h818238b_31
-vcomp14=14.44.35208=h818238b_31
-virtualenv=20.33.1=pypi_0
-vs2015_runtime=14.44.35208=h38c0c73_31
-wcwidth=0.2.13=pyhd8ed1ab_1
-wheel=0.45.1=pyhd8ed1ab_1
-wrapt=1.17.2=pypi_0
-xmltodict=0.14.2=pypi_0
-xz=5.8.1=h208afaa_2
-xz-tools=5.8.1=h2466b09_2
-yarl=1.20.1=pypi_0
-zeromq=4.3.5=ha9f60a1_7
-zipp=3.23.0=pyhd8ed1ab_0
-zlib=1.2.13=h2466b09_6
-zstd=1.5.6=h8880b57_0
+name: CryptoSpider
+channels:
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+dependencies:
+  - python
+  - jsonschema
+  - pandas
+  - dask
+  - pytest
+  - py7zr
+  - matplotlib
+  - scipy
+  - numpy
+  - loguru
+  - tqdm
+  - orjson
+  - json2parquet
+  - ipykernel
+  - mysql-connector-python
+  - nbformat
+  - ipywidgets
+  - notebook
+  - jupyterlab
+  - nbconvert
+  - nbclient
+  - jupyter
+  - numba
+prefix: D:\Software\miniconda3\envs\CryptoSpider
