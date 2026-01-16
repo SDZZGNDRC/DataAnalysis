@@ -4,6 +4,7 @@ import os
 import json
 import csv
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 import py7zr
@@ -63,11 +64,15 @@ def process_file(args: Tuple[Path, int]) -> Dict[str, Any]:
             if json_fname is None:
                 return {'file_index': file_index, 'file_path': str(file_path), 'error': "No JSON file found"}
                 
-            content_dict = z.read(targets=[json_fname])
-            if json_fname not in content_dict:
-                return {'file_index': file_index, 'file_path': str(file_path), 'error': f"Failed to read {json_fname}"}
-            
-            file_bytes = content_dict[json_fname].read()
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                z.extract(path=tmpdirname, targets=[json_fname])
+                extracted_path = os.path.join(tmpdirname, json_fname)
+                
+                if not os.path.exists(extracted_path):
+                     return {'file_index': file_index, 'file_path': str(file_path), 'error': f"Failed to extract {json_fname}"}
+                
+                with open(extracted_path, 'rb') as f:
+                    file_bytes = f.read()
             
             try:
                 if HAS_ORJSON:
@@ -146,7 +151,7 @@ def main():
     valid_results = []
     for res in results:
         if 'error' in res:
-            # print(f"Warning: File {res['file_path']} skipped: {res['error']}")
+            print(f"Warning: File {res['file_path']} skipped: {res['error']}")
             pass
         else:
             valid_results.append(res)
@@ -252,8 +257,16 @@ def main():
                         print(f"Warning: No JSON found in {fpath}")
                         continue
                         
-                    content_dict = z.read(targets=[json_fname])
-                    file_bytes = content_dict[json_fname].read()
+                    with tempfile.TemporaryDirectory() as tmpdirname:
+                        z.extract(path=tmpdirname, targets=[json_fname])
+                        extracted_path = os.path.join(tmpdirname, json_fname)
+                        
+                        if not os.path.exists(extracted_path):
+                            print(f"Warning: Failed to extract {json_fname} from {fpath}")
+                            continue
+
+                        with open(extracted_path, 'rb') as f:
+                            file_bytes = f.read()
                     
                     if HAS_ORJSON:
                         data_obj = orjson.loads(file_bytes)
