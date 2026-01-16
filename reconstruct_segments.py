@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import multiprocessing
 import os
+import tempfile
 from typing import List, Tuple, Dict
 from tqdm import tqdm
 import py7zr
@@ -136,47 +137,60 @@ def process_file(args: Tuple[Path, int]) -> dict:
             # Sort internal files just in case
             sorted_fnames = sorted(all_fnames)
             
-            for fname in sorted_fnames:
-                content_dict = z.read(targets=[fname])
-                if fname not in content_dict:
-                    continue
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                for fname in sorted_fnames:
+                    z.extract(targets=[fname], path=tmpdirname)
+                    extracted_path = Path(tmpdirname) / fname
                     
-                file_bytes = content_dict[fname].read()
-                
-                try:
-                    if HAS_ORJSON:
-                        data = orjson.loads(file_bytes)
-                    else:
-                        data = json.loads(file_bytes)
-                except Exception as e:
-                    errors.append(f"JSON Decode Error in {fname}: {str(e)}")
-                    continue
-                
-                items = data.get('data', [])
-                if not isinstance(items, list):
-                    continue
+                    if not extracted_path.exists():
+                        continue
+                        
+                    try:
+                        with open(extracted_path, 'rb') as f:
+                            file_bytes = f.read()
+                    except Exception as e:
+                        errors.append(f"Read Error in {fname}: {str(e)}")
+                        continue
+                    finally:
+                        # Clean up the file immediately to save space
+                        if extracted_path.exists():
+                            os.remove(extracted_path)
                     
-                for item in items:
-                    inner_data_list = item.get('data')
-                    if not inner_data_list or not isinstance(inner_data_list, list):
+                    try:
+                        if HAS_ORJSON:
+                            data = orjson.loads(file_bytes)
+                        else:
+                            data = json.loads(file_bytes)
+                    except Exception as e:
+                        errors.append(f"JSON Decode Error in {fname}: {str(e)}")
                         continue
                     
-                    inner_obj = inner_data_list[0]
-                    curr_seqId = inner_obj.get('seqId')
-                    curr_prevSeqId = inner_obj.get('prevSeqId')
-                    curr_ts = inner_obj.get('ts')
+                    items = data.get('data', [])
                     
-                    if curr_seqId is None or curr_prevSeqId is None:
+                    if not isinstance(items, list):
                         continue
-                    
-                    ts_val = None
-                    if curr_ts is not None:
-                        try:
-                            ts_val = int(curr_ts)
-                        except ValueError:
-                            pass
-                    
-                    pairs.append((curr_prevSeqId, curr_seqId, current_bitmap, ts_val, ts_val, curr_seqId))
+                        
+                    for item in items:
+                        inner_data_list = item.get('data')
+                        if not inner_data_list or not isinstance(inner_data_list, list):
+                            continue
+                        
+                        inner_obj = inner_data_list[0]
+                        curr_seqId = inner_obj.get('seqId')
+                        curr_prevSeqId = inner_obj.get('prevSeqId')
+                        curr_ts = inner_obj.get('ts')
+                        
+                        if curr_seqId is None or curr_prevSeqId is None:
+                            continue
+                        
+                        ts_val = None
+                        if curr_ts is not None:
+                            try:
+                                ts_val = int(curr_ts)
+                            except ValueError:
+                                pass
+                        
+                        pairs.append((curr_prevSeqId, curr_seqId, current_bitmap, ts_val, ts_val, curr_seqId))
 
     except Exception as e:
         return {'file': file_path.name, 'status': 'error', 'msg': str(e)}
