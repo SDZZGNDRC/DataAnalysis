@@ -32,6 +32,37 @@ def get_timestamp(item: Dict[str, Any]) -> Optional[int]:
     except (KeyError, IndexError, ValueError, TypeError):
         return None
 
+def read_jf(jf: str):
+    with open(jf, 'rb') as f:
+        content = f.read()
+    MAX_RETRY = 10000
+    for _ in range(MAX_RETRY):
+        try:
+            try:
+                root = orjson.loads(content)
+                return root['data']
+            except orjson.JSONDecodeError as e:
+                if "unexpected character" in str(e) and "char" in str(e):
+                    error_pos_str = str(e).split("char ")[-1].strip(")")
+                    try:
+                        error_pos = int(error_pos_str)
+                        if chr(content[error_pos]) == ',':
+                            fixed_content = content[:error_pos] + content[error_pos+1:]
+                        else:
+                            raise Exception(f'unknown error: {content[error_pos-10:error_pos+10]}')
+                        content = fixed_content
+                        continue
+                    except (ValueError, orjson.JSONDecodeError) as fix_error:
+                        print(f"无法修复文件 {jf} 中的JSON: {str(fix_error)}")
+                        print(f'跳过文件 {jf}')
+                        raise fix_error
+                else:
+                    raise Exception(f'read_jf: {e}')
+        except Exception as e:
+            print(f"read_jf: 处理文件 {jf} 时出错: {str(e)}")
+            raise Exception(f'read_jf: {e}')
+    raise Exception(f'修复重试次数超过最大值{MAX_RETRY}')
+
 def process_file(args: Tuple[Path, int]) -> Dict[str, Any]:
     """
     Worker function to process a single 7z file.
@@ -71,19 +102,11 @@ def process_file(args: Tuple[Path, int]) -> Dict[str, Any]:
                 if not os.path.exists(extracted_path):
                      return {'file_index': file_index, 'file_path': str(file_path), 'error': f"Failed to extract {json_fname}"}
                 
-                with open(extracted_path, 'rb') as f:
-                    file_bytes = f.read()
-            
-            try:
-                if HAS_ORJSON:
-                    data_obj = orjson.loads(file_bytes)
-                else:
-                    data_obj = json.loads(file_bytes)
-            except Exception as e:
-                return {'file_index': file_index, 'file_path': str(file_path), 'error': f"JSON parse error: {e}"}
-            
-            # Extract data points
-            items = data_obj.get('data', [])
+                # Use read_jf to handle potential JSON errors
+                try:
+                    items = read_jf(extracted_path)
+                except Exception as e:
+                    return {'file_index': file_index, 'file_path': str(file_path), 'error': f"JSON parse error: {e}"}
             if not isinstance(items, list):
                 return {'file_index': file_index, 'file_path': str(file_path), 'error': "Invalid data format"}
             
@@ -265,17 +288,9 @@ def main():
                             print(f"Warning: Failed to extract {json_fname} from {fpath}")
                             continue
 
-                        with open(extracted_path, 'rb') as f:
-                            file_bytes = f.read()
-                    
-                    if HAS_ORJSON:
-                        data_obj = orjson.loads(file_bytes)
-                    else:
-                        data_obj = json.loads(file_bytes)
-                        
-                    # Merge data
-                    current_items = data_obj.get('data', [])
-                    merged_items.extend(current_items)
+                        # Use read_jf to handle potential JSON errors
+                        current_items = read_jf(extracted_path)
+                        merged_items.extend(current_items)
                         
             except Exception as e:
                 print(f"Error processing {fpath} for merge: {e}")
