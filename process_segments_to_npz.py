@@ -169,6 +169,51 @@ def generate_npz_via_import(books_files: List[str], trades_files: List[str], out
         print(f"转换失败: {e}")
         return False
 
+def parse_row_indices(rows_str: str, total_rows: int) -> set:
+    """
+    解析 --rows 参数，支持逗号分隔的整数和 x-y 格式的范围。
+    例如: "0,2-5,7,10-12"
+    返回包含所有索引的集合（0-based）。
+    """
+    if not rows_str:
+        return set(range(total_rows))
+    
+    selected = set()
+    tokens = [t.strip() for t in rows_str.split(',') if t.strip()]
+    
+    for token in tokens:
+        if '-' in token:
+            # 处理范围格式 x-y
+            parts = token.split('-')
+            if len(parts) != 2:
+                raise ValueError(f"无效的范围格式: {token}")
+            try:
+                start = int(parts[0].strip())
+                end = int(parts[1].strip())
+            except ValueError:
+                raise ValueError(f"范围中的非数字: {token}")
+            
+            if start > end:
+                raise ValueError(f"范围起始大于结束: {token}")
+            
+            # 将范围内的所有索引加入集合
+            selected.update(range(start, end + 1))
+        else:
+            # 处理单个数字
+            try:
+                idx = int(token)
+                selected.add(idx)
+            except ValueError:
+                raise ValueError(f"无效的数字: {token}")
+    
+    # 验证索引范围
+    for idx in selected:
+        if idx < 0 or idx >= total_rows:
+            raise ValueError(f"行索引 {idx} 超出范围 (0-{total_rows-1})")
+    
+    return selected
+
+
 def process_segment(row: dict, index: int, args):
     """处理单个 segment"""
     start_ts = int(row['start_timestamp'])
@@ -242,6 +287,7 @@ def main():
     parser.add_argument('--require-trades', action='store_true', help='必须要有 trades 文件')
     parser.add_argument('--force-subprocess', action='store_true', help='强制使用子进程')
     parser.add_argument('--tmp-dir', type=str, default=None, help='临时文件存储目录')
+    parser.add_argument('--rows', type=str, default=None, help='只处理指定的行（0-based索引，逗号分隔，例如"0,1"处理第1、2行）')
     args = parser.parse_args()
     
     if not os.path.exists(args.csv):
@@ -263,13 +309,25 @@ def main():
     
     print(f"共读取 {len(rows)} 个 segments")
     
+    # 解析 --rows 参数
+    try:
+        selected_indices = parse_row_indices(args.rows, len(rows))
+    except ValueError as e:
+        print(f"错误: --rows 参数格式无效: {e}")
+        sys.exit(1)
+    print(f"只处理行: {sorted(selected_indices)}")
+    
     success_count = 0
+    processed_count = 0
     for i, row in enumerate(rows):
+        if i not in selected_indices:
+            continue
+        processed_count += 1
         print(f"处理 segment {i+1}/{len(rows)}: start={row['start_timestamp']}, end={row['end_timestamp']}")
         if process_segment(row, i, args):
             success_count += 1
     
-    print(f"完成: 成功 {success_count}/{len(rows)}")
+    print(f"完成: 成功 {success_count}/{processed_count}")
 
 if __name__ == '__main__':
     main()
