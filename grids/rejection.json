@@ -1,0 +1,8 @@
+{
+  "CANDLE_INTERVAL_NS": [60000000000],
+  "REJECTION_RATIO": [0.5, 0.7, 0.9],
+  "MIN_BODY_RATIO": [0.01, 0.03, 0.05],
+  "TAKE_PROFIT_FACTOR": [1.005, 1.010, 1.015],
+  "STOP_LOSS_FACTOR": [0.990, 0.995, 1.000],
+  "elapsed_interval": [100000000]
+}

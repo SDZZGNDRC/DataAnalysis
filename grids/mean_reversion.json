@@ -1,0 +1,7 @@
+{
+  "step_ns": [50000000, 100000000],
+  "ema_alpha": [0.05, 0.1, 0.2, 0.4],
+  "threshold_ticks": [1.0, 1.5, 2.0, 3.0],
+  "max_position_lots": [10.0],
+  "order_qty_lots": [2.0]
+}

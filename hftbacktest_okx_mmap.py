@@ -343,7 +343,12 @@ def parse_filename(filename: str) -> Tuple[str, str, str, str, int, int]:
     """
     解析OKX数据文件名，提取元信息。
 
-    文件名格式: OKX-{Type}-{Base}-{Quote}-{Depth}-{StartTime}-{EndTime}.7z
+    支持的文件名格式（instId 可能包含连字符）:
+      OKX-Books-BTC-USDT-400-{StartTime}-{EndTime}.7z
+      OKX-Books-BTC-USDT-SWAP-400-{StartTime}-{EndTime}.7z
+      OKX-Books-BTC-USD-260925-400-{StartTime}-{EndTime}.7z
+      OKX-Trades-BTC-USDT-{StartTime}-{EndTime}.7z
+      OKX-Trades-BTC-USDT-SWAP-{StartTime}-{EndTime}.7z
 
     Args:
         filename: OKX数据文件名
@@ -358,19 +363,29 @@ def parse_filename(filename: str) -> Tuple[str, str, str, str, int, int]:
     elif basename.endswith('.json'):
         basename = basename[:-5]
 
-    # 解析文件名: OKX-Books-BTC-USDT-400-1741219337154-1741219833931 或 OKX-Trades-BTC-USDT-1741219337154-1741219833931
-    pattern = r'OKX-(Books|Trades)-([A-Z0-9]+)-([A-Z0-9]+)(?:-(\d+))?-(\d+)-(\d+)'
+    # instId 可能包含连字符（如 BTC-USDT-SWAP / BTC-USD-260925），
+    # 因此从文件名尾部锚定两个 13 位时间戳进行解析
+    pattern = r'OKX-(Books|Trades)-(.+)-(\d{13})-(\d{13})$'
     match = re.match(pattern, basename)
 
     if not match:
         raise ValueError(f"Invalid OKX filename format: {filename}")
 
     data_type = match.group(1)
-    base = match.group(2)
-    quote = match.group(3)
-    depth = match.group(4) if match.group(4) else "0"  # 对于Trades文件，depth为可选，默认为"0"
-    start_time = int(match.group(5))
-    end_time = int(match.group(6))
+    inst_part = match.group(2)
+    start_time = int(match.group(3))
+    end_time = int(match.group(4))
+
+    depth = "0"  # 对于Trades文件，depth固定为"0"
+    if data_type == 'Books':
+        # Books 的 instId 尾部带深度档位，如 BTC-USDT-SWAP-400
+        inst_part, sep, depth = inst_part.rpartition('-')
+        if not sep or not depth.isdigit():
+            raise ValueError(f"Invalid OKX Books filename (missing depth): {filename}")
+
+    parts = inst_part.split('-')
+    base = parts[0] if len(parts) > 0 else ''
+    quote = parts[1] if len(parts) > 1 else ''
 
     return data_type, base, quote, depth, start_time, end_time
 

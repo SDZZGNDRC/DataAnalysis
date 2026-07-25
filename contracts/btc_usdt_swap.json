@@ -1,0 +1,7 @@
+{
+  "tick_size": 0.1,
+  "lot_size": 0.01,
+  "maker_fee": 0.0002,
+  "taker_fee": 0.0007,
+  "initial_balance": 100000.0
+}
