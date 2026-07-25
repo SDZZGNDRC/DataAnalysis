@@ -146,8 +146,7 @@ def main():
     valid_results = []
     for res in results:
         if 'error' in res:
-            # print(f"Warning: File {res['file_path']} skipped: {res['error']}")
-            pass
+            raise Exception(f"File {res['file_path']} skipped: {res['error']}")
         else:
             valid_results.append(res)
     
@@ -250,7 +249,7 @@ def main():
                     json_fname = next((f for f in all_fnames if f.endswith('.json')), None)
                     if not json_fname:
                         print(f"Warning: No JSON found in {fpath}")
-                        continue
+                        raise FileNotFoundError(f"No JSON file found in {fpath}")
                         
                     content_dict = z.read(targets=[json_fname])
                     file_bytes = content_dict[json_fname].read()
@@ -266,6 +265,7 @@ def main():
                         
             except Exception as e:
                 print(f"Error processing {fpath} for merge: {e}")
+                raise e
         
         if not merged_items:
             print("Error: No data merged.")
@@ -305,6 +305,7 @@ def main():
             
         except Exception as e:
             print(f"Error generating output file: {e}")
+            raise e
 
 if __name__ == "__main__":
     main()

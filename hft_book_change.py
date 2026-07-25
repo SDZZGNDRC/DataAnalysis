@@ -144,9 +144,10 @@ def generate_snapshot_logic(hbt, out, output_interval_ns, check_interval_ns, top
         # 1. 检查是否跨越了输出统计周期
         while now >= next_boundary:
             out.append((current_boundary, changes_count))
-            print(f"Recorded: {current_boundary}, Changes: {changes_count}")
-            if changes_count == 0:
-                exit(-1)
+            # NOTICE: 这里输出的日志可以看到问题所在
+            # print(f"Recorded: {current_boundary}, Changes: {changes_count}")
+            # if changes_count == 0:
+            #     exit(-1)
             current_boundary = next_boundary
             next_boundary += output_interval_ns
             changes_count = 0 
