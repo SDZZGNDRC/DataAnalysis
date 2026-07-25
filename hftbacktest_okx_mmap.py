@@ -25,6 +25,7 @@ import sqlite3
 from typing import List, Optional, Tuple
 import traceback
 import json
+import orjson
 
 scan_snapshot_cache = '.scan_snapshot_cache.sqlite'
 
@@ -40,15 +41,36 @@ def _init_cache_table():
         ''')
         conn.commit()
 
-try:
-    import orjson
-    def json_loads(data):
-        return orjson.loads(data)
-except ImportError:
-    import json
-    def json_loads(data):
-        return json.loads(data)
-    print("警告: 未安装orjson，使用标准json库。建议运行: pip install orjson")
+def read_jf(jf: str):
+    with open(jf, 'rb') as f:
+        content = f.read()
+    MAX_RETRY = 10000
+    for _ in range(MAX_RETRY):
+        try:
+            try:
+                root = orjson.loads(content)
+                return root['data']
+            except orjson.JSONDecodeError as e:
+                if "unexpected character" in str(e) and "char" in str(e):
+                    error_pos_str = str(e).split("char ")[-1].strip(")")
+                    try:
+                        error_pos = int(error_pos_str)
+                        if chr(content[error_pos]) == ',':
+                            fixed_content = content[:error_pos] + content[error_pos+1:]
+                        else:
+                            raise Exception(f'unknown error: {content[error_pos-10:error_pos+10]}')
+                        content = fixed_content
+                        continue
+                    except (ValueError, orjson.JSONDecodeError) as fix_error:
+                        print(f"无法修复文件 {jf} 中的JSON: {str(fix_error)}")
+                        print(f'跳过文件 {jf}')
+                        raise fix_error
+                else:
+                    raise Exception(f'read_jf: {e}')
+        except Exception as e:
+            print(f"read_jf: 处理文件 {jf} 时出错: {str(e)}")
+            raise Exception(f'read_jf: {e}')
+    raise Exception(f'修复重试次数超过最大值{MAX_RETRY}')
 
 import numpy as np
 from numba import njit
@@ -405,13 +427,12 @@ def process_books_file(
     Returns:
         Tuple of (events_array, found_snapshot)
     """
-    with open(json_file, 'rb') as f:
-        data = json_loads(f.read())
+    data = read_jf(json_file)
 
     # 预估事件数量
     estimated_events = 0
     try:
-        for item in data['data']:
+        for item in data:
             if not item.get('data'):
                 # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
                 # 有一些数据点是这样的: {'arg': {'channel': ''}, 'data': None, 'action': ''}
@@ -431,7 +452,7 @@ def process_books_file(
     buffer = np.empty(estimated_events, event_dtype)
     row_num = 0
 
-    for item in data['data']:
+    for item in data:
         if not item.get('action', ''):
             # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
             # 有一些数据点是这样的: {'arg': {'channel': ''}, 'data': None, 'action': ''}
@@ -582,20 +603,19 @@ def process_trades_file(
     Returns:
         events_array
     """
-    with open(json_file, 'rb') as f:
-        data = json_loads(f.read())
+    data = read_jf(json_file)
 
     try:
         invalid_items = 0
-        for item in data['data']:
+        for item in data:
             if not item.get('data'):
                 invalid_items += 1
 
         # 创建缓冲区
-        buffer = np.empty(len(data['data']) - invalid_items, event_dtype)
+        buffer = np.empty(len(data) - invalid_items, event_dtype)
         row_num = 0
 
-        for item in data['data']:
+        for item in data:
             if not item.get('data'):
                 # 有一些数据点是这样的: {'localTs': 1761729783735, 'event': 'notice', 'msg': 'The connection will soon be closed for a service upgrade. Please reconnect.', 'code': '64008', 'connId': 'ced729ae'}
                 # 有一些数据点是这样的: {'arg': {'channel': ''}, 'data': None}
@@ -725,11 +745,9 @@ def scan_snapshot_worker(files_chunk: List[str]) -> bool:
                     json_file = file_path
                 
                 # 检查文件
-                with open(json_file, 'rb') as f:
-                    # 注意：这里需要确保 json_loads 可用
-                    data = json_loads(f.read())
+                data = read_jf(json_file)
                 
-                for item in data.get('data', []):
+                for item in data:
                     if item.get('action') == 'snapshot':
                         current_file_has_snapshot = True
                         found_snapshot = True
