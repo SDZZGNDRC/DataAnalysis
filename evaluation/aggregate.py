@@ -1,12 +1,6 @@
-r"""聚合 grid_search 的 result JSON 为分析用宽表。
+r"""Aggregate grid_search results into a wide CSV.
 
-用法：
-    python evaluation/aggregate.py --results-dir E:\tmp\results\mr_train ^
-        --out E:\tmp\results\mr_train\aggregate.csv
-
-扫描 --results-dir 下的所有 *.json，解析为 pandas DataFrame，列：
-  strategy, seg_index, seg_duration_h, <params...>, status,
-  equity, return, sharpe, sortino, max_drawdown, num_trades, fee, buyhold_return
+Scans --results-dir/**/*.json -> DataFrame.
 """
 import argparse
 import glob
@@ -17,10 +11,10 @@ import pandas as pd
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--results-dir", required=True)
-    parser.add_argument("--out", required=True)
-    args = parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--results-dir", required=True)
+    p.add_argument("--out", required=True)
+    args = p.parse_args()
 
     rows = []
     for f in glob.glob(str(Path(args.results_dir) / "**" / "*.json"), recursive=True):
@@ -35,17 +29,16 @@ def main():
             row[k] = m.get(k)
         row["error"] = (d.get("error") or {}).get("error", "")
         rows.append(row)
-
     if not rows:
-        print("无结果文件"); return
+        print("no files"); return
     df = pd.DataFrame(rows)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.out, index=False)
     ok = df[df["status"] == "ok"]
-    print(f"汇总: {len(df)} 行 (ok={len(ok)})")
-    print(f"seg 数: {ok['seg_index'].nunique() if len(ok) else 0}")
-    print(f"参数组数: {ok.drop(columns=['seg_index','seg_duration_h','status','equity','return','sharpe','sortino','max_drawdown','num_trades','fee','buyhold_return','final_position','error','strategy']).drop_duplicates().shape[0] if len(ok) else 0}")
-    print(f"输出: {args.out}")
+    fail = df[df["status"] != "ok"]
+    if len(fail) and fail["error"].str.len().any():
+        print("first error:", fail["error"].iloc[0])
+    print(f"rows={len(df)} ok={len(ok)} segs={ok['seg_index'].nunique() if len(ok) else 0} out={args.out}")
 
 
 if __name__ == "__main__":

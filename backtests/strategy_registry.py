@@ -11,7 +11,13 @@ from strategies.mean_reversion_demo import mean_reversion_strategy, is_success a
 from strategies.order_flow_imbalance import order_flow_imbalance_strategy, is_success as ofi_is_success
 from backtest_rejection_strategy import backtest_rejection_strategy
 
-StrategySpec = namedtuple("StrategySpec", ["func", "param_keys", "uses_recorder", "is_success"])
+StrategySpec = namedtuple(
+    "StrategySpec",
+    ["func", "param_keys", "uses_recorder", "is_success", "params_as_object"],
+)
+# params_as_object=True：策略形参为 (hbt, [recorder,] params_namedtuple)，
+# 即把网格 dict 打包为单一 namedtuple 传入（如 rejection）；
+# False：把网格 dict 展开为 keyword 参数传入（mean_reversion / ofi）。
 
 # 均值回归（无 recorder）
 MR = StrategySpec(
@@ -19,6 +25,7 @@ MR = StrategySpec(
     param_keys=["step_ns", "ema_alpha", "threshold_ticks", "max_position_lots", "order_qty_lots"],
     uses_recorder=False,
     is_success=mr_is_success,
+    params_as_object=False,
 )
 
 # 订单流不平衡（无 recorder）
@@ -28,15 +35,22 @@ OFI = StrategySpec(
                 "fee_rate", "max_position_lots", "order_qty_lots"],
     uses_recorder=False,
     is_success=ofi_is_success,
+    params_as_object=False,
 )
 
-# Rejection（recorder-based）
+# Rejection（recorder-based，params 作为单一 namedtuple 传入）
+from collections import namedtuple as _nt
+_RejectionParams = _nt("RejectionParams", [
+    "CANDLE_INTERVAL_NS", "REJECTION_RATIO", "MIN_BODY_RATIO",
+    "TAKE_PROFIT_FACTOR", "STOP_LOSS_FACTOR", "elapsed_interval",
+])
 REJ = StrategySpec(
     func=backtest_rejection_strategy,
     param_keys=["CANDLE_INTERVAL_NS", "REJECTION_RATIO", "MIN_BODY_RATIO",
                 "TAKE_PROFIT_FACTOR", "STOP_LOSS_FACTOR", "elapsed_interval"],
     uses_recorder=True,
     is_success=None,  # 返回 True 视为成功
+    params_as_object=True,
 )
 
 # 队列不平衡做市（Phase 4 待注册；先用占位 None 占位以避免 KeyError）
