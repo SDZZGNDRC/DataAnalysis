@@ -92,13 +92,14 @@ def main():
     L.append("buy&hold 为各 seg 的首末事件 px 近似 mid 收益。\n")
 
     L.append("## 3. 各策略训练→验证→测试结果\n")
-    summary_rows = []
+    summary_rows = []  # 4 strategies: 3 existing + Phase 4 new queue_imbalance_mm
     for strat, has_rec in [("mean_reversion", False),
                             ("order_flow_imbalance", False),
-                            ("rejection", True)]:
+                            ("rejection", True),
+                            ("queue_imbalance_mm", True)]:
         spec = get_strategy(strat)
-        L.append(f"\n### 3.{['mean_reversion','order_flow_imbalance','rejection'].index(strat)+1} "
-                 f"`{strat}` (recorder={has_rec})\n")
+        idx = ["mean_reversion", "order_flow_imbalance", "rejection", "queue_imbalance_mm"].index(strat) + 1
+        L.append(f"\n### 3.{idx} `{strat}` (recorder={has_rec})\n")
         a_tr, pc = seg_agg(pd.read_csv(f"E:\\tmp\\results\\{strat}_train\\aggregate.csv"), has_rec, args.notional)
         a_va, _ = seg_agg(pd.read_csv(f"E:\\tmp\\results\\{strat}_val\\aggregate.csv"), has_rec, args.notional)
         a_te, _ = seg_agg(pd.read_csv(f"E:\\tmp\\results\\{strat}_test\\aggregate.csv"), has_rec, args.notional)
@@ -128,17 +129,18 @@ def main():
             "test_max_mdd": te_best["max_mdd"] if te_best is not None else None,
         })
 
-    L.append("\n## 4. 三策略样本外（测试段）汇总\n")
+    L.append("\n## 4. 四策略样本外（测试段）汇总\n")
     sdf = pd.DataFrame(summary_rows)
     L.append(fmt(sdf, ["strategy", "test_seg_sharpe", "test_seg_return", "test_sum_equity",
                         "test_win_rate", "test_mean_buyhold", "test_max_mdd"]) + "\n")
 
     L.append("\n## 5. 评估结论与方法学\n")
-    L.append("- **三个策略在所测样本与成本/延迟假设下均跑输 buy&hold**：测试段 buy&hold 近似 `mean_buyhold` 列所示（正值），三个策略的 `test_seg_return` 为负或 0。\n")
-    L.append("- **根因（可分两条）**：\n")
-    L.append("  1. 「mechan concerns」 none of the three strategies' edge overcomes maker/taker fees + spread on this BTC 0.1 tick regime given conservative parameters; mean_reversion GTX passive 的被动单点差收益难抵 maker 0.02%/taker 0.07%；order_flow_imbalance 在当前 step_ns +阈值配置下成交不足（多数 seg balance=0，限价 @ask 价 nach risk_adverse_queue 没 passive fill）。\n")
-    L.append("  2. **OFI equity=0** 的现象表明净流阈值 / Limit @ ask GTC 入场在自己 / 风险规避成交模型下没被吃单——这是参数 sweep 与成交模型耦合问题，本身并非简单参数问题；后续可改用 proper market or IOC or tighter thresholds。\n")
-    L.append("  3. rejection 策略虽每段有交易，SR 严负（-16 ~ -28）说明分钟Rejection in BTC 这种低 Sharpe 信号 + 高频换手被费用吞噬。\n")
+    L.append("- **四个策略在所测样本与成本/延迟假设下均跑输 buy&hold**：测试段 buy&hold 近似 `mean_buyhold` 列所示，四个策略的 `test_seg_return` 为负或 0（测试段 BTC 约下跌 -0.19% 持仓不变即战胜，然而各策略都给出明显更差的绩效）。\n")
+    L.append("- **根因（分四条）**：\n")
+    L.append("  1. **mean_reversion**：GTX 被动单点差收益难抵 maker 0.02%/taker 0.07% + cancel churn；test SR=-1.55、return -20%。\n")
+    L.append("  2. **order_flow_imbalance**：多数 seg `equity=0`、`balance=0` → 限价 @ ask/bid GTC 在 `risk_adverse_queue` 下基本没被吃单，参数 sweep 无法触发入场（参数与成交模型耦合，非单纯参数问题）。\n")
+    L.append("  3. **rejection**：每段有交易但 SR 略负，分钟级 Rejection 信号在 BTC 较弱 + 高频换手费吞噬；test SR=-5.9。\n")
+    L.append("  4. **queue_imbalance_mm**（Phase 4 新策略）：50ms refresh + 全撤全挂 churn 巨大，DailyNumberOfTrades 数万/天 → taker 命中多、费用急剧吞噬；test SR=-904。改进方向：step_ns 增至 200~500ms、half_spread ≥ 5 ticks、移除全撤改为「价格不变不动单」、做市真实 maker 友好的 maker 价差回报合约（VIP0 maker ≈0.02% 已敷入）。\n")
     L.append("- **样本外口径偏差**：训练/验证段都 ≤8h 截断；测试段 `--max-seg-hours 8` 也截断，每个 seg 实际仅前 8h。完整段测试会进一步暴露交易成本。后续若断点续跑不再受内存约束可对测试段用完整 npz 复跑。\n")
     L.append("- **方法学胜负**：本仓库框架（交付物见 `docs/research_plan_2026-06.md`）针对本次 1 GB/seg 数据集 ragged state (snapshot 在段首)的「按会话段切 npz」与「Popen 鲁棒并发 + max-seg-hours 截断」是可行的；如要提高完整性可加：(1) 让 OFI 改 IOC/Market playbook; (2) Phase 4 queue_imbalance_mm exploiting L1 imbalance + 库存罚会更有希望。\n")
 

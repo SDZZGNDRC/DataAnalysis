@@ -53,19 +53,30 @@ REJ = StrategySpec(
     params_as_object=True,
 )
 
-# 队列不平衡做市（Phase 4 待注册；先用占位 None 占位以避免 KeyError）
-QIMM = None  # 在 strategies/queue_imbalance_mm.py 完成后在此注册
+# 队列不平衡做市（Phase 4 新策略，recorder-based）
+from strategies.queue_imbalance_mm import queue_imbalance_mm_strategy, is_success as qimm_is_success
+QIMM = StrategySpec(
+    func=queue_imbalance_mm_strategy,
+    param_keys=["step_ns", "gamma", "inv_penalty", "half_spread_ticks",
+                "max_position_lots", "order_qty_lots", "skew_floor_ticks"],
+    uses_recorder=True,
+    is_success=qimm_is_success,
+    params_as_object=False,
+)
 
 REGISTRY = {
     "mean_reversion": MR,
     "order_flow_imbalance": OFI,
     "rejection": REJ,
+    "queue_imbalance_mm": QIMM,
 }
 
 
 def get_strategy(name: str) -> StrategySpec:
-    if name not in REGISTRY or REGISTRY[name] is None:
+    if name not in REGISTRY:
         raise KeyError(f"未知策略: {name}（可用: {list(REGISTRY)}）")
+    if REGISTRY[name] is None:
+        raise KeyError(f"策略 {name} 尚未注册")
     return REGISTRY[name]
 
 
