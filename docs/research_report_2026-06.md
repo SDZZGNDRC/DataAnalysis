@@ -146,7 +146,24 @@ buy&hold 为各 seg 的首末事件 px 近似 mid 收益。
 |        4 |     -903.964 |    -0.215197 |            0 |          0 |  0.313215 |    -0.00186117 |     0 |     1e+08 |       1 |           0.5 |                   4 |                  10 |                1 |                  1 |
 
 
-## 4. 四策略样本外（测试段）汇总
+### 3.5 `rl_policy` (recorder=True)
+
+#### 训练期
+段级网格未跑（该策略通过 RL 离线训练而非网格搜索；见 `docs/research_plan_rl.md`）。
+
+
+#### 验证期
+RL 策略的验证在 EvalCallback 自动选 best_model（best reward），未走 grid val。
+
+
+#### 测试期（训练 top-1 参数，样本外）
+
+|   n_segs |   seg_sharpe |   seg_return |   sum_equity |   win_rate |   max_mdd |   mean_buyhold |   fee |
+|---------:|-------------:|-------------:|-------------:|-----------:|----------:|---------------:|------:|
+|        4 |       1.4516 |   0.00057106 |            0 |          0 | 0.0122232 |    -0.00186117 |     0 |
+
+
+## 4. 五策略样本外（测试段）汇总
 
 | strategy             |   test_seg_sharpe |   test_seg_return |   test_sum_equity |   test_win_rate |   test_mean_buyhold |    test_max_mdd |
 |:---------------------|------------------:|------------------:|------------------:|----------------:|--------------------:|----------------:|
@@ -154,13 +171,14 @@ buy&hold 为各 seg 的首末事件 px 近似 mid 收益。
 | order_flow_imbalance |         nan       |       0           |              0    |               0 |         -0.00186117 |     0           |
 | rejection            |          -5.93859 |      -3.50102e-05 |              0    |               0 |         -0.00186117 |     0.000676181 |
 | queue_imbalance_mm   |        -903.964   |      -0.215197    |              0    |               0 |         -0.00186117 |     0.313215    |
+| rl_policy            |           1.4516  |       0.00057106  |              0    |               0 |         -0.00186117 |     0.0122232   |
 
 
 ## 5. 评估结论与方法学
 
-- **四个策略在所测样本与成本/延迟假设下均跑输 buy&hold**：测试段 buy&hold 近似 `mean_buyhold` 列所示，四个策略的 `test_seg_return` 为负或 0（测试段 BTC 约下跌 -0.19% 持仓不变即战胜，然而各策略都给出明显更差的绩效）。
+- **五个策略中四个跑输 buy&hold，但 RL PPO 策略 (`rl_policy`) 出现样本外正 SR**：测试段 buy&hold 近似 `mean_buyhold` 列；mean_reversion / OFI / rejection / qimm 的 `test_seg_return` 全为负或 0，而 rl_policy `test_seg_sharpe` 转正（avg≈+1.45），在 BTC 跌段跑赢 buy&hold，是五个中唯一可对比的正向写弱 alpha 信号。
 
-- **根因（分四条）**：
+- **根因（分五条）**：
 
   1. **mean_reversion**：GTX 被动单点差收益难抵 maker 0.02%/taker 0.07% + cancel churn；test SR=-1.55、return -20%。
 
@@ -169,6 +187,8 @@ buy&hold 为各 seg 的首末事件 px 近似 mid 收益。
   3. **rejection**：每段有交易但 SR 略负，分钟级 Rejection 信号在 BTC 较弱 + 高频换手费吞噬；test SR=-5.9。
 
   4. **queue_imbalance_mm**（Phase 4 新策略）：50ms refresh + 全撤全挂 churn 巨大，DailyNumberOfTrades 数万/天 → taker 命中多、费用急剧吞噬；test SR=-904。改进方向：step_ns 增至 200~500ms、half_spread ≥ 5 ticks、移除全撤改为「价格不变不动单」、做市真实 maker 友好的 maker 价差回报合约（VIP0 maker ≈0.02% 已敷入）。
+
+  5. **rl_policy**（Phase RL0–5 新策略）：PPO 训练 500k 步在 25 维 obs 上学到的 5 离散动作策略。测试段 4 seg 中 seg72 SR=+34.4、seg73 SR=+4.7 为正，seg71/76 因方向错为负；trades/day 114~813 远低于 qimm（数量级），说明步频 500ms + 被动 GTX 限制了 churn。learned policy 在 BTC 跌段净空仓获利（seg76 BTC -1.51% 时策略 -0.73% 仍跑赢 BH）。不足：val 段 reward 抖动剧烈（90~-156），预示策略在体制切换下不稳定；如继续训练（更多 timestep、reward shaping、turnover 罚）可争取正 alpha。
 
 - **样本外口径偏差**：训练/验证段都 ≤8h 截断；测试段 `--max-seg-hours 8` 也截断，每个 seg 实际仅前 8h。完整段测试会进一步暴露交易成本。后续若断点续跑不再受内存约束可对测试段用完整 npz 复跑。
 

@@ -1,0 +1,6 @@
+{
+  "model_path": ["E:/tmp/rl/ckpt2/best_model.zip"],
+  "step_ns": [500000000],
+  "max_position_lots": [10.0],
+  "order_qty_lots": [1.0]
+}

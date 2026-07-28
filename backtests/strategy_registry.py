@@ -64,11 +64,23 @@ QIMM = StrategySpec(
     params_as_object=False,
 )
 
+# RL PPO 策略（Phase 4 RL，recorder-based；params_as_object=False 但策略函数实际签名
+# 为 (hbt, recorder, model_path, step_ns, max_position_lots, ...)，靠 worker 调用约定）
+from strategies.rl_policy_strategy import rl_policy_strategy, is_success as rl_is_success
+RL_POLICY = StrategySpec(
+    func=rl_policy_strategy,
+    param_keys=["model_path", "step_ns", "max_position_lots", "order_qty_lots"],
+    uses_recorder=True,
+    is_success=rl_is_success,
+    params_as_object=False,
+)
+
 REGISTRY = {
     "mean_reversion": MR,
     "order_flow_imbalance": OFI,
     "rejection": REJ,
     "queue_imbalance_mm": QIMM,
+    "rl_policy": RL_POLICY,
 }
 
 

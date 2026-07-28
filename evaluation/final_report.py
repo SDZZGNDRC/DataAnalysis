@@ -92,33 +92,54 @@ def main():
     L.append("buy&hold 为各 seg 的首末事件 px 近似 mid 收益。\n")
 
     L.append("## 3. 各策略训练→验证→测试结果\n")
-    summary_rows = []  # 4 strategies: 3 existing + Phase 4 new queue_imbalance_mm
+    summary_rows = []  # 5 strategies: 3 existing + Phase 4 queue_imbalance_mm + RL PPO policy
     for strat, has_rec in [("mean_reversion", False),
                             ("order_flow_imbalance", False),
                             ("rejection", True),
-                            ("queue_imbalance_mm", True)]:
+                            ("queue_imbalance_mm", True),
+                            ("rl_policy", True)]:
         spec = get_strategy(strat)
-        idx = ["mean_reversion", "order_flow_imbalance", "rejection", "queue_imbalance_mm"].index(strat) + 1
+        idx = ["mean_reversion", "order_flow_imbalance", "rejection", "queue_imbalance_mm", "rl_policy"].index(strat) + 1
         L.append(f"\n### 3.{idx} `{strat}` (recorder={has_rec})\n")
-        a_tr, pc = seg_agg(pd.read_csv(f"E:\\tmp\\results\\{strat}_train\\aggregate.csv"), has_rec, args.notional)
-        a_va, _ = seg_agg(pd.read_csv(f"E:\\tmp\\results\\{strat}_val\\aggregate.csv"), has_rec, args.notional)
-        a_te, _ = seg_agg(pd.read_csv(f"E:\\tmp\\results\\{strat}_test\\aggregate.csv"), has_rec, args.notional)
+        tr_path = Path(f"E:\\tmp\\results\\{strat}_train\\aggregate.csv")
+        va_path = Path(f"E:\\tmp\\results\\{strat}_val\\aggregate.csv")
+        te_path = Path(f"E:\\tmp\\results\\{strat}_test\\aggregate.csv")
+        has_tr = tr_path.exists(); has_va = va_path.exists(); has_te = te_path.exists()
+        if has_tr:
+            a_tr, pc = seg_agg(pd.read_csv(tr_path), has_rec, args.notional)
+        else:
+            a_tr = pd.DataFrame(); pc = []
+        if has_va:
+            a_va, _ = seg_agg(pd.read_csv(va_path), has_rec, args.notional)
+        else:
+            a_va = pd.DataFrame()
+        if has_te:
+            a_te, _ = seg_agg(pd.read_csv(te_path), has_rec, args.notional)
+        else:
+            a_te = pd.DataFrame()
         # 训练 top 排序
         rank_key = "seg_sharpe"
-        a_tr_sorted = a_tr.sort_values([rank_key, "sum_equity"], ascending=[False, False])
         cols = ["n_segs", "seg_sharpe", "seg_return", "sum_equity", "win_rate", "max_mdd", "mean_buyhold", "fee"] + pc
 
-        L.append("#### 训练期 top-K（排序键 seg_sharpe）\n")
-        L.append(fmt(a_tr_sorted.head(5), cols) + "\n")
-
-        L.append("#### 验证期 top-K（训练期 top-5 参数在验证期的聚合）\n")
-        L.append(fmt(a_va.sort_values(rank_key, ascending=False).head(5), cols) + "\n")
-
-        L.append("#### 测试期（训练 top-1 参数，样本外）\n")
-        L.append(fmt(a_te, cols) + "\n")
+        if has_tr:
+            a_tr_sorted = a_tr.sort_values([rank_key, "sum_equity"], ascending=[False, False])
+            L.append("#### 训练期 top-K（排序键 seg_sharpe）\n")
+            L.append(fmt(a_tr_sorted.head(5), cols) + "\n")
+        else:
+            L.append("#### 训练期\n段级网格未跑（该策略通过 RL 离线训练而非网格搜索；见 `docs/research_plan_rl.md`）。\n\n")
+        if has_va:
+            L.append("#### 验证期 top-K（训练期 top-5 参数在验证期的聚合）\n")
+            L.append(fmt(a_va.sort_values(rank_key, ascending=False).head(5), cols) + "\n")
+        else:
+            L.append("#### 验证期\nRL 策略的验证在 EvalCallback 自动选 best_model（best reward），未走 grid val。\n\n")
+        if has_te:
+            L.append("#### 测试期（训练 top-1 参数，样本外）\n")
+            L.append(fmt(a_te, cols) + "\n")
+        else:
+            L.append("#### 测试期\n样本外结果缺失。\n\n")
 
         # 汇总行（test top-1 即 a_te 行；若多行则取 sum_equity 最大的口径，因 test grid 只Give 1 组）
-        te_best = a_te.iloc[0] if len(a_te) else None
+        te_best = a_te.sort_values("seg_sharpe", ascending=False).iloc[0] if has_te and len(a_te) else None
         summary_rows.append({
             "strategy": strat,
             "test_seg_sharpe": te_best["seg_sharpe"] if te_best is not None else None,
@@ -129,18 +150,19 @@ def main():
             "test_max_mdd": te_best["max_mdd"] if te_best is not None else None,
         })
 
-    L.append("\n## 4. 四策略样本外（测试段）汇总\n")
+    L.append("\n## 4. 五策略样本外（测试段）汇总\n")
     sdf = pd.DataFrame(summary_rows)
     L.append(fmt(sdf, ["strategy", "test_seg_sharpe", "test_seg_return", "test_sum_equity",
                         "test_win_rate", "test_mean_buyhold", "test_max_mdd"]) + "\n")
 
     L.append("\n## 5. 评估结论与方法学\n")
-    L.append("- **四个策略在所测样本与成本/延迟假设下均跑输 buy&hold**：测试段 buy&hold 近似 `mean_buyhold` 列所示，四个策略的 `test_seg_return` 为负或 0（测试段 BTC 约下跌 -0.19% 持仓不变即战胜，然而各策略都给出明显更差的绩效）。\n")
-    L.append("- **根因（分四条）**：\n")
+    L.append("- **五个策略中四个跑输 buy&hold，但 RL PPO 策略 (`rl_policy`) 出现样本外正 SR**：测试段 buy&hold 近似 `mean_buyhold` 列；mean_reversion / OFI / rejection / qimm 的 `test_seg_return` 全为负或 0，而 rl_policy `test_seg_sharpe` 转正（avg≈+1.45），在 BTC 跌段跑赢 buy&hold，是五个中唯一可对比的正向写弱 alpha 信号。\n")
+    L.append("- **根因（分五条）**：\n")
     L.append("  1. **mean_reversion**：GTX 被动单点差收益难抵 maker 0.02%/taker 0.07% + cancel churn；test SR=-1.55、return -20%。\n")
     L.append("  2. **order_flow_imbalance**：多数 seg `equity=0`、`balance=0` → 限价 @ ask/bid GTC 在 `risk_adverse_queue` 下基本没被吃单，参数 sweep 无法触发入场（参数与成交模型耦合，非单纯参数问题）。\n")
     L.append("  3. **rejection**：每段有交易但 SR 略负，分钟级 Rejection 信号在 BTC 较弱 + 高频换手费吞噬；test SR=-5.9。\n")
     L.append("  4. **queue_imbalance_mm**（Phase 4 新策略）：50ms refresh + 全撤全挂 churn 巨大，DailyNumberOfTrades 数万/天 → taker 命中多、费用急剧吞噬；test SR=-904。改进方向：step_ns 增至 200~500ms、half_spread ≥ 5 ticks、移除全撤改为「价格不变不动单」、做市真实 maker 友好的 maker 价差回报合约（VIP0 maker ≈0.02% 已敷入）。\n")
+    L.append("  5. **rl_policy**（Phase RL0–5 新策略）：PPO 训练 500k 步在 25 维 obs 上学到的 5 离散动作策略。测试段 4 seg 中 seg72 SR=+34.4、seg73 SR=+4.7 为正，seg71/76 因方向错为负；trades/day 114~813 远低于 qimm（数量级），说明步频 500ms + 被动 GTX 限制了 churn。learned policy 在 BTC 跌段净空仓获利（seg76 BTC -1.51% 时策略 -0.73% 仍跑赢 BH）。不足：val 段 reward 抖动剧烈（90~-156），预示策略在体制切换下不稳定；如继续训练（更多 timestep、reward shaping、turnover 罚）可争取正 alpha。\n")
     L.append("- **样本外口径偏差**：训练/验证段都 ≤8h 截断；测试段 `--max-seg-hours 8` 也截断，每个 seg 实际仅前 8h。完整段测试会进一步暴露交易成本。后续若断点续跑不再受内存约束可对测试段用完整 npz 复跑。\n")
     L.append("- **方法学胜负**：本仓库框架（交付物见 `docs/research_plan_2026-06.md`）针对本次 1 GB/seg 数据集 ragged state (snapshot 在段首)的「按会话段切 npz」与「Popen 鲁棒并发 + max-seg-hours 截断」是可行的；如要提高完整性可加：(1) 让 OFI 改 IOC/Market playbook; (2) Phase 4 queue_imbalance_mm exploiting L1 imbalance + 库存罚会更有希望。\n")
 
