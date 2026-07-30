@@ -69,7 +69,15 @@ QIMM = StrategySpec(
 from strategies.rl_policy_strategy import rl_policy_strategy, is_success as rl_is_success
 RL_POLICY = StrategySpec(
     func=rl_policy_strategy,
-    param_keys=["model_path", "step_ns", "max_position_lots", "order_qty_lots"],
+    param_keys=[
+        "model_path",
+        "step_ns",
+        "max_position_lots",
+        "order_qty_lots",
+        "min_order_lifetime_ns",
+        "max_order_lifetime_ns",
+        "reprice_threshold_ticks",
+    ],
     uses_recorder=True,
     is_success=rl_is_success,
     params_as_object=False,

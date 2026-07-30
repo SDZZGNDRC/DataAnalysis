@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from rl.policy_core import RL_DIAGNOSTIC_FIELDS
+
 STRATEGIES = (
     "mean_reversion",
     "order_flow_imbalance",
@@ -22,7 +24,7 @@ NON_PARAM_COLUMNS = {
     "fee", "liquidation_cost", "buyhold_return", "final_position",
     "trading_volume", "trading_value", "backtest_duration_h",
     "report_notional", "error",
-}
+} | set(RL_DIAGNOSTIC_FIELDS)
 
 
 def _return_t_stat(returns: np.ndarray) -> float:

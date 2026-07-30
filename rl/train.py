@@ -29,6 +29,10 @@ def main():
     p.add_argument("--manifest", required=True)
     p.add_argument("--train-split", default="train")
     p.add_argument("--val-split", default="val")
+    p.add_argument("--train-max-events", type=int, default=0)
+    p.add_argument("--val-max-events", type=int, default=0)
+    p.add_argument("--train-max-segments", type=int, default=0)
+    p.add_argument("--val-max-segments", type=int, default=0)
     p.add_argument("--contract", default=str(PROJECT_ROOT / "contracts" / "btc_usdt_swap.json"))
     p.add_argument("--total-timesteps", type=int, default=5_000_000)
     p.add_argument("--n-envs", type=int, default=4)
@@ -36,15 +40,24 @@ def main():
     p.add_argument("--batch-size", type=int, default=256)
     p.add_argument("--n-epochs", type=int, default=10)
     p.add_argument("--learning-rate", type=float, default=3e-4)
-    p.add_argument("--gamma", type=float, default=0.99)
+    p.add_argument("--gamma", type=float, default=0.995)
     p.add_argument("--gae-lambda", type=float, default=0.95)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--clip-range", type=float, default=0.2)
     p.add_argument("--max-seg-hours", type=float, default=8.0)
-    p.add_argument("--step-ns", type=int, default=500_000_000)
+    p.add_argument("--step-ns", type=int, default=2_000_000_000)
     p.add_argument("--max-position-lots", type=float, default=10.0)
     p.add_argument("--order-qty-lots", type=float, default=1.0)
     p.add_argument("--reward-churn-penalty", type=float, default=0.0)
+    p.add_argument(
+        "--min-order-lifetime-ns", type=int, default=5_000_000_000
+    )
+    p.add_argument(
+        "--max-order-lifetime-ns", type=int, default=15_000_000_000
+    )
+    p.add_argument(
+        "--reprice-threshold-ticks", type=float, default=1.0
+    )
     p.add_argument("--warmup-minutes", type=float, default=15.0)
     p.add_argument(
         "--eval-freq-timesteps",
@@ -59,6 +72,24 @@ def main():
         help="validation window per segment; all validation segments are still cycled",
     )
     p.add_argument(
+        "--eval-min-trades",
+        type=float,
+        default=1.0,
+        help=(
+            "minimum completed trades in every validation episode for a "
+            "checkpoint to be eligible as best"
+        ),
+    )
+    p.add_argument(
+        "--eval-ineligible-penalty",
+        type=float,
+        default=100_000.0,
+        help=(
+            "validation-only reward penalty; it does not affect training "
+            "rewards"
+        ),
+    )
+    p.add_argument(
         "--checkpoint-freq-timesteps",
         type=int,
         default=500_000,
@@ -70,8 +101,18 @@ def main():
     args = p.parse_args()
 
     contract = json.load(open(args.contract))
-    train_paths = load_manifest(args.manifest, args.train_split)
-    val_paths = load_manifest(args.manifest, args.val_split)
+    train_paths = load_manifest(
+        args.manifest,
+        args.train_split,
+        max_events=args.train_max_events,
+        max_segments=args.train_max_segments,
+    )
+    val_paths = load_manifest(
+        args.manifest,
+        args.val_split,
+        max_events=args.val_max_events,
+        max_segments=args.val_max_segments,
+    )
     print(f"train segs: {len(train_paths)} | val segs: {len(val_paths)}")
 
     env_kwargs = dict(
@@ -80,6 +121,9 @@ def main():
         max_position_lots=args.max_position_lots,
         order_qty_lots=args.order_qty_lots,
         reward_churn_penalty=args.reward_churn_penalty,
+        min_order_lifetime_ns=args.min_order_lifetime_ns,
+        max_order_lifetime_ns=args.max_order_lifetime_ns,
+        reprice_threshold_ticks=args.reprice_threshold_ticks,
         warmup_steps=(
             int(round(args.warmup_minutes * 60 * 1_000_000_000 / args.step_ns)) + 1
             if args.warmup_minutes > 0
@@ -95,6 +139,10 @@ def main():
     # eval env: single env, val split
     eval_env_kwargs = dict(env_kwargs)
     eval_env_kwargs["max_seg_hours"] = args.eval_max_seg_hours
+    eval_env_kwargs["eval_min_trades"] = args.eval_min_trades
+    eval_env_kwargs[
+        "eval_ineligible_penalty"
+    ] = args.eval_ineligible_penalty
     def make_eval_env():
         return Monitor(BTCUSDSwapMapsEnv(
             val_paths,
@@ -138,7 +186,12 @@ def main():
                 f"{getattr(model, 'rl_policy_schema_version', None)!r}; "
                 f"expected {POLICY_SCHEMA_VERSION!r}"
             )
-        model.n_steps = args.n_steps
+        if int(model.n_steps) != args.n_steps:
+            raise ValueError(
+                "cannot change --n-steps when resuming because the saved "
+                f"rollout buffer uses n_steps={model.n_steps}; requested "
+                f"{args.n_steps}"
+            )
         reset_ts = False
     else:
         model = PPO(
@@ -165,8 +218,12 @@ def main():
         "step_ns": args.step_ns,
         "max_position_lots": args.max_position_lots,
         "order_qty_lots": args.order_qty_lots,
+        "min_order_lifetime_ns": args.min_order_lifetime_ns,
+        "max_order_lifetime_ns": args.max_order_lifetime_ns,
+        "reprice_threshold_ticks": args.reprice_threshold_ticks,
         "warmup_steps": env_kwargs["warmup_steps"],
         "eval_max_seg_hours": args.eval_max_seg_hours,
+        "eval_min_trades": args.eval_min_trades,
         "report_notional_usdt": contract.get(
             "report_notional_usdt", contract["initial_balance"]
         ),

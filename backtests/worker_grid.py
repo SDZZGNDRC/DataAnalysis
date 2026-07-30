@@ -33,7 +33,21 @@ from hftbacktest.stats.metrics import (
     Sortino,
 )
 from backtests.strategy_registry import get_strategy
-from rl.policy_core import terminal_liquidation_cost
+from rl.policy_core import RL_DIAGNOSTIC_FIELDS, terminal_liquidation_cost
+
+
+def _json_safe(value):
+    """Convert non-finite/numpy values to strict JSON-compatible values."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        number = float(value)
+        return number if np.isfinite(number) else None
+    return value
 
 
 def _resolve_mid(best_bid, best_ask):
@@ -103,15 +117,30 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
     summary_metrics = {}
     final_state = None
     liquidation_cost = 0.0
+    strategy_diagnostics = {}
     recorder = Recorder(1, 5_000_000) if spec.uses_recorder else None
 
     try:
         if spec.uses_recorder:
             if spec.params_as_object:
                 nt = _nt("Params", spec.param_keys)
-                exit_code = spec.func(hbt, recorder.recorder, nt(**params))
+                strategy_result = spec.func(
+                    hbt, recorder.recorder, nt(**params)
+                )
             else:
-                exit_code = spec.func(hbt, recorder.recorder, **params)
+                strategy_result = spec.func(
+                    hbt, recorder.recorder, **params
+                )
+            if (
+                isinstance(strategy_result, dict)
+                and "exit_code" in strategy_result
+            ):
+                exit_code = strategy_result["exit_code"]
+                strategy_diagnostics = dict(
+                    strategy_result.get("diagnostics", {})
+                )
+            else:
+                exit_code = strategy_result
             depth = hbt.depth(0)
             state = hbt.state_values(0)
             mid = _resolve_mid(depth.best_bid, depth.best_ask)
@@ -159,7 +188,7 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
                         v = pd.to_datetime(v).isoformat()
                     summary_metrics[str(k)] = float(v) if isinstance(v, (int, float, np.integer, np.floating)) else v
             if spec.is_success is not None:
-                ok = bool(spec.is_success(exit_code))
+                ok = bool(spec.is_success(strategy_result))
             elif isinstance(exit_code, (bool, np.bool_)):
                 ok = bool(exit_code)
             else:
@@ -251,6 +280,9 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
     )
     metrics_out["backtest_duration_h"] = backtest_duration_h
     metrics_out["report_notional"] = report_notional
+    for field in RL_DIAGNOSTIC_FIELDS:
+        if field in strategy_diagnostics:
+            metrics_out[field] = float(strategy_diagnostics[field])
     return metrics_out, None
 
 
@@ -286,8 +318,9 @@ def main():
         "error": err or {},
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    out = _json_safe(out)
     with open(args.out, "w") as f:
-        json.dump(out, f, default=str, indent=2)
+        json.dump(out, f, default=str, indent=2, allow_nan=False)
     print(json.dumps({"out": args.out, "status": out["status"]}))
     if err is not None:
         raise SystemExit(2)

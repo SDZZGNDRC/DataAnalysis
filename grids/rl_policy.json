@@ -1,6 +1,9 @@
 {
-  "model_path": ["E:/tmp/rl/v2/ckpt/best_model.zip"],
-  "step_ns": [500000000],
+  "model_path": ["E:/tmp/rl/v3/ckpt/best_model.zip"],
+  "step_ns": [2000000000],
   "max_position_lots": [10.0],
-  "order_qty_lots": [1.0]
+  "order_qty_lots": [1.0],
+  "min_order_lifetime_ns": [5000000000],
+  "max_order_lifetime_ns": [15000000000],
+  "reprice_threshold_ticks": [1.0]
 }

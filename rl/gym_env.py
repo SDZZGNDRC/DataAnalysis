@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from hftbacktest import BacktestAsset, HashMapMarketDepthBacktest
 
 from rl.policy_core import (
-    ACTION_DELTA_LOTS,
+    ACTION_TARGET_FRACTIONS,
     N_ACTIONS,
     OBS_DIM,
     RLPolicyCore,
@@ -25,11 +25,28 @@ from rl.policy_core import (
 )
 
 # Backwards-compatible public names used by older scripts.
-ACTION_DELTA = ACTION_DELTA_LOTS
+ACTION_DELTA = ACTION_TARGET_FRACTIONS
 _resolve_mid = resolve_mid
 
 
-def load_manifest(manifest_csv: str, split: Optional[str] = None) -> List[str]:
+def activity_gate_penalty(
+    num_trades: float,
+    min_trades: float,
+    ineligible_penalty: float,
+) -> float:
+    """Evaluation-only checkpoint eligibility penalty."""
+    if min_trades <= 0 or num_trades >= min_trades:
+        return 0.0
+    return max(0.0, float(ineligible_penalty))
+
+
+def load_manifest(
+    manifest_csv: str,
+    split: Optional[str] = None,
+    *,
+    max_events: int = 0,
+    max_segments: int = 0,
+) -> List[str]:
     manifest = pd.read_csv(manifest_csv)
     if (
         "schema_version" not in manifest
@@ -41,6 +58,21 @@ def load_manifest(manifest_csv: str, split: Optional[str] = None) -> List[str]:
         )
     if split is not None:
         manifest = manifest[manifest["split"] == split]
+    if "actual_start_ns" in manifest:
+        manifest = manifest.sort_values(["actual_start_ns", "seg_index"])
+    if max_events > 0:
+        manifest = manifest[
+            manifest["event_count"].astype(int) <= int(max_events)
+        ]
+    if max_segments > 0 and len(manifest) > max_segments:
+        indices = np.linspace(
+            0, len(manifest) - 1, num=max_segments, dtype=int
+        )
+        manifest = manifest.iloc[np.unique(indices)]
+    if manifest.empty:
+        raise ValueError(
+            f"manifest split {split!r} empty after resource filters"
+        )
     return manifest["npz_path"].tolist()
 
 
@@ -55,11 +87,16 @@ class BTCUSDSwapMapsEnv(gym.Env):
         contract: dict,
         max_position_lots: float = 10.0,
         order_qty_lots: float = 1.0,
-        step_ns: int = 500_000_000,
+        step_ns: int = 2_000_000_000,
         max_seg_hours: float = 8.0,
         warmup_steps: Optional[int] = None,
         reward_scale: float = 1.0,
         reward_churn_penalty: float = 0.0,
+        min_order_lifetime_ns: int = 5_000_000_000,
+        max_order_lifetime_ns: int = 15_000_000_000,
+        reprice_threshold_ticks: float = 1.0,
+        eval_min_trades: float = 0.0,
+        eval_ineligible_penalty: float = 0.0,
         selection_mode: str = "random",
         seed: Optional[int] = None,
     ):
@@ -74,6 +111,10 @@ class BTCUSDSwapMapsEnv(gym.Env):
         self.max_seg_hours = float(max_seg_hours)
         self.reward_scale = float(reward_scale)
         self.reward_churn_penalty = float(reward_churn_penalty)
+        self.eval_min_trades = max(0.0, float(eval_min_trades))
+        self.eval_ineligible_penalty = max(
+            0.0, float(eval_ineligible_penalty)
+        )
         if selection_mode not in ("random", "cycle"):
             raise ValueError("selection_mode must be 'random' or 'cycle'")
         self.selection_mode = selection_mode
@@ -97,6 +138,9 @@ class BTCUSDSwapMapsEnv(gym.Env):
             max_position=self.max_position,
             order_qty=self.order_qty,
             report_notional=self.report_notional,
+            min_order_lifetime_ns=min_order_lifetime_ns,
+            max_order_lifetime_ns=max_order_lifetime_ns,
+            reprice_threshold_ticks=reprice_threshold_ticks,
         )
         self.warmup_steps = (
             self._core.recommended_warmup_steps
@@ -138,7 +182,12 @@ class BTCUSDSwapMapsEnv(gym.Env):
                 pass
             self._hbt = None
 
-    def _info(self, equity: float, liquidation_cost: float = 0.0) -> dict:
+    def _info(
+        self,
+        equity: float,
+        liquidation_cost: float = 0.0,
+        activity_penalty: float = 0.0,
+    ) -> dict:
         state = self._hbt.state_values(0)
         return {
             "equity": float(equity),
@@ -147,6 +196,11 @@ class BTCUSDSwapMapsEnv(gym.Env):
             "liquidation_cost": float(liquidation_cost),
             "n_trades": float(state.num_trades),
             "trading_volume": float(state.trading_volume),
+            "activity_eligible": bool(
+                self.eval_min_trades <= 0
+                or float(state.num_trades) >= self.eval_min_trades
+            ),
+            "activity_penalty": float(activity_penalty),
         }
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -197,6 +251,7 @@ class BTCUSDSwapMapsEnv(gym.Env):
             reward -= self.reward_churn_penalty * snapshot.traded_qty
 
         liquidation_cost = 0.0
+        activity_penalty = 0.0
         if terminated:
             liquidation_cost = terminal_liquidation_cost(
                 self._hbt.state_values(0),
@@ -205,6 +260,12 @@ class BTCUSDSwapMapsEnv(gym.Env):
             )
             equity -= liquidation_cost
             reward -= liquidation_cost * self.reward_scale
+            activity_penalty = activity_gate_penalty(
+                snapshot.num_trades,
+                self.eval_min_trades,
+                self.eval_ineligible_penalty,
+            )
+            reward -= activity_penalty
             self._terminated = True
 
         self._prev_equity = equity
@@ -213,7 +274,7 @@ class BTCUSDSwapMapsEnv(gym.Env):
             float(reward),
             terminated,
             False,
-            self._info(equity, liquidation_cost),
+            self._info(equity, liquidation_cost, activity_penalty),
         )
 
     def close(self):

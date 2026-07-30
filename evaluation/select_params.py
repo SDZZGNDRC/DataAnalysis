@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backtests.strategy_registry import get_strategy
+from rl.policy_core import RL_DIAGNOSTIC_FIELDS
 
 
 def main():
@@ -46,7 +47,7 @@ def main():
                  "sharpe", "sortino", "max_drawdown", "num_trades", "fee", "buyhold_return",
                  "daily_num_trades", "liquidation_cost", "final_position",
                  "trading_volume", "trading_value", "backtest_duration_h",
-                 "report_notional", "error"}
+                 "report_notional", "error"} | set(RL_DIAGNOSTIC_FIELDS)
     df = pd.read_csv(args.train_agg)
     if (
         "result_schema_version" not in df

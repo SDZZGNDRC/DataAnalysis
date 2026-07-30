@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from rl.policy_core import RL_DIAGNOSTIC_FIELDS
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -28,7 +30,8 @@ def main():
         for k in ("equity", "return", "sharpe", "sortino", "max_drawdown",
                   "num_trades", "daily_num_trades", "fee", "liquidation_cost",
                   "buyhold_return", "final_position", "trading_volume",
-                  "trading_value", "backtest_duration_h", "report_notional"):
+                  "trading_value", "backtest_duration_h", "report_notional",
+                  *RL_DIAGNOSTIC_FIELDS):
             row[k] = m.get(k)
         row["error"] = (d.get("error") or {}).get("error", "")
         rows.append(row)

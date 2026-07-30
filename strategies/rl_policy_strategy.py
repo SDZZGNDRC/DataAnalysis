@@ -15,9 +15,12 @@ def rl_policy_strategy(
     hbt,
     recorder,
     model_path,
-    step_ns=500_000_000,
+    step_ns=2_000_000_000,
     max_position_lots=10.0,
     order_qty_lots=1.0,
+    min_order_lifetime_ns=5_000_000_000,
+    max_order_lifetime_ns=15_000_000_000,
+    reprice_threshold_ticks=1.0,
     contract=None,
     deterministic=True,
     max_steps=2_000_000,
@@ -44,6 +47,9 @@ def rl_policy_strategy(
         ("step_ns", step_ns),
         ("max_position_lots", max_position_lots),
         ("order_qty_lots", order_qty_lots),
+        ("min_order_lifetime_ns", min_order_lifetime_ns),
+        ("max_order_lifetime_ns", max_order_lifetime_ns),
+        ("reprice_threshold_ticks", reprice_threshold_ticks),
     ):
         if key in trained_config and float(trained_config[key]) != float(actual):
             raise ValueError(
@@ -73,6 +79,9 @@ def rl_policy_strategy(
         max_position=float(max_position_lots) * lot_size,
         order_qty=float(order_qty_lots) * lot_size,
         report_notional=report_notional,
+        min_order_lifetime_ns=min_order_lifetime_ns,
+        max_order_lifetime_ns=max_order_lifetime_ns,
+        reprice_threshold_ticks=reprice_threshold_ticks,
         asset_no=asset_no,
     )
     core.reset(hbt.state_values(asset_no))
@@ -89,34 +98,55 @@ def rl_policy_strategy(
             f"but backtest requested {warmup_steps}"
         )
 
+    snapshot = None
     for _ in range(max(0, int(warmup_steps))):
         exit_code = hbt.elapse(step_ns)
         if exit_code != 0:
-            return exit_code
+            return {
+                "exit_code": int(exit_code),
+                "diagnostics": core.diagnostics(),
+            }
         hbt.clear_inactive_orders(asset_no)
-        core.observe(hbt)
+        snapshot = core.observe(hbt)
+
+    if snapshot is None:
+        exit_code = hbt.elapse(step_ns)
+        if exit_code != 0:
+            return {
+                "exit_code": int(exit_code),
+                "diagnostics": core.diagnostics(),
+            }
+        hbt.clear_inactive_orders(asset_no)
+        snapshot = core.observe(hbt)
 
     exit_code = 0
     decisions = 0
     while decisions < int(max_steps):
-        exit_code = hbt.elapse(step_ns)
-        if exit_code != 0:
-            break
-        hbt.clear_inactive_orders(asset_no)
-        snapshot = core.observe(hbt)
         action, _ = model.predict(snapshot.obs, deterministic=deterministic)
         action = int(action.item()) if hasattr(action, "item") else int(action)
         if action < 0 or action >= N_ACTIONS:
             action = 2
         submit_rc = core.apply_action(hbt, action)
         if submit_rc != 0:
-            return submit_rc
+            return {
+                "exit_code": int(submit_rc),
+                "diagnostics": core.diagnostics(),
+            }
+        exit_code = hbt.elapse(step_ns)
+        hbt.clear_inactive_orders(asset_no)
+        snapshot = core.observe(hbt)
         recorder.record(hbt)
         decisions += 1
+        if exit_code != 0:
+            break
 
     hbt.clear_inactive_orders(asset_no)
-    return exit_code
+    return {
+        "exit_code": int(exit_code),
+        "diagnostics": core.diagnostics(),
+    }
 
 
-def is_success(exit_code):
+def is_success(result):
+    exit_code = result.get("exit_code") if isinstance(result, dict) else result
     return exit_code in (1, 2, 15)

@@ -6,12 +6,24 @@ import pandas as pd
 import pytest
 
 from backtests.grid_search import _expand_grid
+from backtests.worker_grid import _json_safe
 from evaluation.final_report import aggregate_parameter_tuples
 from hftbacktest import BUY, BUY_EVENT, DEPTH_SNAPSHOT_EVENT
 from hftbacktest.types import event_dtype
 from hftbacktest_okx import process_books_file, process_trades_file
-from rl.policy_core import RLPolicyCore, terminal_liquidation_cost
-from rl.gym_env import load_manifest
+from rl.alpha_probe import (
+    evaluate_probe,
+    fit_random_feature_probe,
+    fit_ridge_probe,
+    predict_probe,
+)
+from rl.policy_core import (
+    OBS_DIM,
+    OBSERVATION_NAMES,
+    RLPolicyCore,
+    terminal_liquidation_cost,
+)
+from rl.gym_env import activity_gate_penalty, load_manifest
 from scripts.convert_segments_npz import (
     _existing_segment_is_valid,
     _validate_segment_data,
@@ -152,6 +164,7 @@ class _Order:
     order_id: int
     side: int = BUY
     leaves_qty: float = 0.02
+    price: float = 100.0
     cancellable: bool = True
 
 
@@ -173,6 +186,7 @@ class _Depth:
     best_bid_tick = 1000
     best_ask_tick = 1010
     lot_size = 0.01
+    tick_size = 0.1
 
     def ask_qty_at_tick(self, _tick):
         return 1.0
@@ -202,6 +216,12 @@ class _Hbt:
     def clear_inactive_orders(self, _asset):
         return None
 
+    def last_trades(self, _asset):
+        return np.empty(0, dtype=event_dtype)
+
+    def clear_last_trades(self, _asset):
+        return None
+
     def cancel(self, _asset, order_id, _wait):
         self.cancellations.append(order_id)
         return 0
@@ -215,7 +235,7 @@ class _Hbt:
         return 0
 
 
-def test_rl_core_strong_action_uses_one_unique_two_lot_order_and_cancels():
+def test_rl_core_uses_target_position_and_keeps_young_matching_order():
     hbt = _Hbt()
     core = RLPolicyCore(
         step_ns=500_000_000,
@@ -224,15 +244,54 @@ def test_rl_core_strong_action_uses_one_unique_two_lot_order_and_cancels():
         report_notional=100_000,
     )
     assert core.apply_action(hbt, 0) == 0
-    assert hbt.submissions == [("buy", 1_000_000, 100.0, 0.02)]
+    assert hbt.submissions == [("buy", 1_000_000, 100.0, 0.01)]
 
     hbt.active = [_Order(order_id=1_000_000)]
+    hbt.current_timestamp += 2_000_000_000
+    assert core.apply_action(hbt, 0) == 0
+    assert hbt.cancellations == []
+    assert len(hbt.submissions) == 1
+
     assert core.apply_action(hbt, 2) == 0
     assert hbt.cancellations == [1_000_000]
 
     hbt.active = []
     assert core.apply_action(hbt, 1) == 0
     assert hbt.submissions[-1][1] == 1_000_001
+    diagnostics = core.diagnostics()
+    assert diagnostics["decision_count"] == 4
+    assert diagnostics["action_count_0"] == 2
+    assert diagnostics["action_count_1"] == 1
+    assert diagnostics["action_count_2"] == 1
+    assert diagnostics["submit_successes"] == 2
+    assert diagnostics["cancel_successes"] == 1
+    assert diagnostics["signal_cancel_successes"] == 1
+    assert diagnostics["mean_cancelled_order_age_ms"] == 2000
+
+
+def test_rl_core_reprices_only_after_minimum_lifetime():
+    hbt = _Hbt()
+    core = RLPolicyCore(
+        step_ns=2_000_000_000,
+        max_position=0.1,
+        order_qty=0.01,
+        report_notional=100_000,
+        min_order_lifetime_ns=5_000_000_000,
+        max_order_lifetime_ns=15_000_000_000,
+        reprice_threshold_ticks=1,
+    )
+    assert core.apply_action(hbt, 0) == 0
+    hbt.active = [_Order(order_id=1_000_000, price=100.0)]
+    hbt.depth_obj.best_bid = 99.8
+
+    hbt.current_timestamp += 4_000_000_000
+    assert core.apply_action(hbt, 0) == 0
+    assert hbt.cancellations == []
+
+    hbt.current_timestamp += 2_000_000_000
+    assert core.apply_action(hbt, 0) == 0
+    assert hbt.cancellations == [1_000_000]
+    assert core.diagnostics()["reprice_cancel_successes"] == 1
 
 
 def test_fill_recency_uses_trade_counter_and_terminal_cost_is_charged():
@@ -255,6 +314,9 @@ def test_fill_recency_uses_trade_counter_and_terminal_cost_is_charged():
     assert second.obs[17] == 0.0
     assert second.traded_qty == 0.01
     assert second.obs[22] == 1.0
+    diagnostics = core.diagnostics()
+    assert diagnostics["fill_events"] == 1
+    assert diagnostics["fill_qty"] == pytest.approx(0.01)
 
     cost = terminal_liquidation_cost(hbt.state, hbt.depth_obj, taker_fee=0.001)
     assert cost > 0
@@ -307,3 +369,82 @@ def test_rl_loader_rejects_legacy_manifest(tmp_path):
     }]).to_csv(path, index=False)
     with pytest.raises(ValueError, match="exact-segment-v2"):
         load_manifest(str(path), "train")
+
+
+def test_rl_loader_applies_deterministic_resource_filters(tmp_path):
+    path = tmp_path / "manifest.csv"
+    pd.DataFrame([
+        {
+            "npz_path": f"{index}.npz",
+            "split": "train",
+            "schema_version": "exact-segment-v2",
+            "actual_start_ns": index,
+            "seg_index": index,
+            "event_count": event_count,
+        }
+        for index, event_count in ((3, 30), (1, 10), (2, 20))
+    ]).to_csv(path, index=False)
+
+    assert load_manifest(
+        str(path), "train", max_events=20, max_segments=1
+    ) == ["1.npz"]
+
+
+def test_alpha_probe_fits_train_only_thresholds_and_charges_cost():
+    x_fit = np.arange(100, dtype=float).reshape(-1, 1)
+    y_fit = 0.1 * x_fit[:, 0] - 5.0
+    model = fit_ridge_probe(x_fit, y_fit, ridge=1e-8)
+
+    x_eval = np.array([[0.0], [5.0], [95.0], [100.0]])
+    y_eval = np.array([-6.0, -5.0, 5.0, 6.0])
+    predictions = predict_probe(x_eval, model)
+    metrics = evaluate_probe(
+        y_eval,
+        predictions,
+        np.array([1, 1, 2, 2]),
+        lower_threshold_bps=model["lower_threshold_bps"],
+        upper_threshold_bps=model["upper_threshold_bps"],
+        round_trip_cost_bps=4.0,
+    )
+
+    assert metrics["signal_coverage"] == 1.0
+    assert metrics["gross_edge_bps"] == pytest.approx(5.5)
+    assert metrics["net_edge_bps"] == pytest.approx(1.5)
+    assert metrics["positive_segment_fraction"] == 1.0
+
+
+def test_activity_gate_changes_validation_score_not_training_reward():
+    assert activity_gate_penalty(0, min_trades=1, ineligible_penalty=100_000) == 100_000
+    assert activity_gate_penalty(1, min_trades=1, ineligible_penalty=100_000) == 0
+    assert activity_gate_penalty(0, min_trades=0, ineligible_penalty=100_000) == 0
+
+
+def test_v3_observation_schema_and_result_json_are_strict():
+    assert len(OBSERVATION_NAMES) == OBS_DIM == 43
+    assert _json_safe({"sharpe": np.nan, "count": np.int64(3)}) == {
+        "sharpe": None,
+        "count": 3,
+    }
+
+
+def test_random_feature_probe_is_deterministic_and_predicts():
+    features = np.arange(40, dtype=float).reshape(20, 2)
+    target = np.sin(features[:, 0])
+    first = fit_random_feature_probe(
+        features,
+        target,
+        ridge=1e-2,
+        n_random_features=8,
+        seed=7,
+    )
+    second = fit_random_feature_probe(
+        features,
+        target,
+        ridge=1e-2,
+        n_random_features=8,
+        seed=7,
+    )
+    assert np.allclose(
+        predict_probe(features, first),
+        predict_probe(features, second),
+    )
