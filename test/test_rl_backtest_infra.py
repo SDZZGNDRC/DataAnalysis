@@ -23,11 +23,24 @@ from rl.policy_core import (
     RLPolicyCore,
     terminal_liquidation_cost,
 )
+from rl.walk_forward_probe import (
+    evaluate_persistent_signal,
+    expanding_folds,
+)
 from rl.gym_env import activity_gate_penalty, load_manifest
+from rl.external_features import backward_asof
+from rl.spot_features import (
+    SpotFeatureStore,
+    augment_segment_with_spot,
+)
 from scripts.convert_segments_npz import (
     _existing_segment_is_valid,
     _validate_segment_data,
     _write_metadata,
+)
+from scripts.build_rl_external_features import (
+    deduplicate_last_per_second,
+    extract_root_entries,
 )
 
 
@@ -448,3 +461,145 @@ def test_random_feature_probe_is_deterministic_and_predicts():
         predict_probe(features, first),
         predict_probe(features, second),
     )
+
+
+def test_expanding_walk_forward_folds_are_chronological():
+    folds = expanding_folds(
+        n_segments=14,
+        min_train_segments=8,
+        n_folds=3,
+    )
+    assert folds == [
+        (slice(0, 8), slice(8, 10)),
+        (slice(0, 10), slice(10, 12)),
+        (slice(0, 12), slice(12, 14)),
+    ]
+
+
+def test_persistent_signal_charges_turnover_and_terminal_exit():
+    features = np.arange(20, dtype=float).reshape(-1, 1)
+    target = features[:, 0]
+    model = fit_ridge_probe(
+        features, target, ridge=1e-8, tail_fraction=0.1
+    )
+    mids = np.linspace(100.0, 102.0, num=20)
+    result = evaluate_persistent_signal(
+        [(1, features, mids)],
+        model,
+        horizon_steps=5,
+        one_way_cost_bps=2.0,
+    )
+    assert result["turnover_units"] > 0
+    assert result["cost_bps"] == pytest.approx(
+        2.0 * result["turnover_units"]
+    )
+
+
+def test_persistent_barrier_caps_loss_and_blocks_immediate_reentry():
+    features = np.arange(100, dtype=float).reshape(-1, 1)
+    model = fit_ridge_probe(
+        features,
+        features[:, 0],
+        ridge=1e-8,
+        tail_fraction=0.1,
+    )
+    mids = np.r_[
+        np.full(90, 100.0),
+        np.linspace(100.0, 98.0, num=10),
+    ]
+    fixed = evaluate_persistent_signal(
+        [(1, features, mids)],
+        model,
+        horizon_steps=50,
+        one_way_cost_bps=0.0,
+        exit_mode="fixed",
+    )
+    guarded = evaluate_persistent_signal(
+        [(1, features, mids)],
+        model,
+        horizon_steps=50,
+        one_way_cost_bps=0.0,
+        exit_mode="fixed_barrier",
+        stop_loss_bps=25.0,
+        take_profit_bps=100.0,
+    )
+    assert guarded["net_pnl_bps"] > fixed["net_pnl_bps"]
+    assert guarded["exposure_fraction"] < fixed["exposure_fraction"]
+    assert guarded["round_trip_equivalents"] <= (
+        fixed["round_trip_equivalents"]
+    )
+
+
+def test_external_feature_parser_filters_instrument_and_keeps_last_second():
+    root = {
+        "data": [
+            {
+                "arg": {"instId": "BTC-USDT"},
+                "data": [
+                    {"ts": "1000", "idxPx": "100"},
+                    {"ts": "1500", "idxPx": "101"},
+                    {"ts": "2000", "idxPx": "102"},
+                ],
+            },
+            {
+                "arg": {"instId": "ETH-USDT"},
+                "data": [{"ts": "2000", "idxPx": "999"}],
+            },
+        ]
+    }
+    timestamps, values = extract_root_entries(
+        root, inst_id="BTC-USDT", fields=("idxPx",)
+    )
+    timestamps, values = deduplicate_last_per_second(
+        timestamps, values
+    )
+    assert timestamps.tolist() == [1500, 2000]
+    assert values["idxPx"].tolist() == [101.0, 102.0]
+
+
+def test_external_asof_never_reads_future_observation():
+    values, valid = backward_asof(
+        np.array([500, 1500, 2501]),
+        np.array([1000, 2000]),
+        np.array([10.0, 20.0]),
+        max_staleness_ms=600,
+    )
+    assert values.tolist() == [0.0, 10.0, 20.0]
+    assert valid.tolist() == [False, True, True]
+
+
+def test_external_asof_accepts_empty_source():
+    values, valid = backward_asof(
+        np.array([1000, 2000]),
+        np.array([], dtype=np.int64),
+        np.array([], dtype=np.float64),
+        max_staleness_ms=1000,
+    )
+    assert values.tolist() == [0.0, 0.0]
+    assert valid.tolist() == [False, False]
+
+
+def test_spot_feed_delay_blocks_not_yet_available_update():
+    store = SpotFeatureStore(
+        metadata={},
+        timestamps_ms=np.array([950]),
+        last_px=np.array([100.0]),
+        bid_px=np.array([99.9]),
+        ask_px=np.array([100.1]),
+        bid_qty=np.array([2.0]),
+        ask_qty=np.array([1.0]),
+    )
+    segment = (
+        1,
+        np.zeros((1, 2)),
+        np.array([100.0]),
+        np.array([1000]),
+    )
+    delayed = augment_segment_with_spot(
+        segment, store, feed_delay_ms=100
+    )
+    immediate = augment_segment_with_spot(
+        segment, store, feed_delay_ms=0
+    )
+    assert delayed[1][0, -1] == 0.0
+    assert immediate[1][0, -1] == 1.0

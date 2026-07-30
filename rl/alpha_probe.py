@@ -26,6 +26,7 @@ from hftbacktest import BacktestAsset, HashMapMarketDepthBacktest
 from rl.policy_core import (
     MARKET_FEATURE_INDICES,
     OBSERVATION_NAMES,
+    POLICY_SCHEMA_VERSION,
     RLPolicyCore,
 )
 
@@ -108,8 +109,8 @@ def collect_segment(
     step_ns: int,
     warmup_minutes: float,
     max_segment_hours: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Replay one segment and return market observations plus mid prices."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Replay one segment and return observations, mids, and decision timestamps."""
     with np.load(npz_path) as source:
         data = source["data"]
     if max_segment_hours > 0:
@@ -136,6 +137,7 @@ def collect_segment(
     )
     features: list[np.ndarray] = []
     mids: list[float] = []
+    timestamps_ms: list[int] = []
     steps = 0
     try:
         while True:
@@ -150,6 +152,9 @@ def collect_segment(
                     )
                 )
                 mids.append(float(snapshot.mid))
+                timestamps_ms.append(
+                    int(hbt.current_timestamp) // 1_000_000
+                )
             steps += 1
     finally:
         hbt.close()
@@ -159,18 +164,24 @@ def collect_segment(
                 (0, len(MARKET_FEATURE_INDICES)), dtype=np.float64
             ),
             np.empty(0, dtype=np.float64),
+            np.empty(0, dtype=np.int64),
         )
-    return np.vstack(features), np.asarray(mids, dtype=np.float64)
+    return (
+        np.vstack(features),
+        np.asarray(mids, dtype=np.float64),
+        np.asarray(timestamps_ms, dtype=np.int64),
+    )
 
 
 def make_horizon_dataset(
-    segments: Iterable[tuple[int, np.ndarray, np.ndarray]],
+    segments: Iterable[tuple],
     horizon_steps: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     feature_parts = []
     target_parts = []
     segment_parts = []
-    for segment_id, features, mids in segments:
+    for segment in segments:
+        segment_id, features, mids = segment[:3]
         if len(mids) <= horizon_steps:
             continue
         feature_parts.append(features[:-horizon_steps])
@@ -228,6 +239,7 @@ def fit_ridge_probe(
         "mean": mean,
         "scale": scale,
         "coefficients": coefficients,
+        "neutral_threshold_bps": float(np.median(predictions)),
         "lower_threshold_bps": float(lower),
         "upper_threshold_bps": float(upper),
     }
@@ -287,6 +299,7 @@ def fit_random_feature_probe(
         "bias": bias,
         "coefficients": coefficients,
         "linear_feature_count": x.shape[1],
+        "neutral_threshold_bps": float(np.median(predictions)),
         "lower_threshold_bps": float(lower),
         "upper_threshold_bps": float(upper),
     }
@@ -363,29 +376,141 @@ def evaluate_probe(
     }
 
 
-def _collect_rows(
+def _cache_path(
+    cache_dir: Path,
+    row: pd.Series,
+    *,
+    step_ns: int,
+    warmup_minutes: float,
+    max_segment_hours: float,
+) -> Path:
+    schema = POLICY_SCHEMA_VERSION.replace("-", "_")
+    source_hash = str(row.get("npz_sha256", "nohash"))[:12]
+    warmup_seconds = int(round(warmup_minutes * 60))
+    max_seconds = int(round(max_segment_hours * 3600))
+    return cache_dir / (
+        f"seg_{int(row['seg_index'])}_{source_hash}_{schema}_"
+        f"step{step_ns}_warm{warmup_seconds}_max{max_seconds}.npz"
+    )
+
+
+def _load_cached_segment(
+    path: Path,
+    expected_metadata: dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    if not path.exists():
+        return None
+    try:
+        with np.load(path) as cached:
+            metadata = json.loads(str(cached["metadata"].item()))
+            if metadata != expected_metadata:
+                return None
+            features = cached["features"]
+            mids = cached["mids"]
+            timestamps_ms = cached["timestamps_ms"]
+        if (
+            features.ndim != 2
+            or features.shape[1] != len(MARKET_FEATURE_INDICES)
+            or len(features) != len(mids)
+            or len(features) != len(timestamps_ms)
+            or not np.isfinite(features).all()
+            or not np.isfinite(mids).all()
+            or (
+                len(timestamps_ms) > 1
+                and np.any(np.diff(timestamps_ms) <= 0)
+            )
+        ):
+            return None
+        return features, mids, timestamps_ms
+    except Exception:
+        return None
+
+
+def _cache_metadata(
+    row: pd.Series,
+    *,
+    step_ns: int,
+    warmup_minutes: float,
+    max_segment_hours: float,
+) -> dict:
+    return {
+        "cache_schema_version": "rl-feature-cache-v2",
+        "policy_schema_version": POLICY_SCHEMA_VERSION,
+        "source_npz_sha256": str(row.get("npz_sha256", "")),
+        "segment_id": int(row["seg_index"]),
+        "step_ns": int(step_ns),
+        "warmup_minutes": float(warmup_minutes),
+        "max_segment_hours": float(max_segment_hours),
+        "feature_indices": list(MARKET_FEATURE_INDICES),
+    }
+
+
+def collect_rows(
     rows: pd.DataFrame,
     contract: dict,
-    args,
-    label: str,
-) -> list[tuple[int, np.ndarray, np.ndarray]]:
+    *,
+    step_ns: int,
+    warmup_minutes: float,
+    max_segment_hours: float,
+    cache_dir: Path | None,
+    label: str = "collect",
+) -> list[tuple[int, np.ndarray, np.ndarray, np.ndarray]]:
     result = []
     for _, row in rows.iterrows():
         segment_id = int(row["seg_index"])
+        metadata = _cache_metadata(
+            row,
+            step_ns=step_ns,
+            warmup_minutes=warmup_minutes,
+            max_segment_hours=max_segment_hours,
+        )
+        cached = None
+        cache_path = None
+        if cache_dir is not None:
+            cache_path = _cache_path(
+                cache_dir,
+                row,
+                step_ns=step_ns,
+                warmup_minutes=warmup_minutes,
+                max_segment_hours=max_segment_hours,
+            )
+            cached = _load_cached_segment(cache_path, metadata)
         print(
             f"[{label}] segment={segment_id} "
-            f"events={int(row['event_count']):,}",
+            f"events={int(row['event_count']):,} "
+            f"source={'cache' if cached is not None else 'replay'}",
             flush=True,
         )
-        features, mids = collect_segment(
-            str(row["npz_path"]),
-            contract,
-            step_ns=args.step_ns,
-            warmup_minutes=args.warmup_minutes,
-            max_segment_hours=args.max_segment_hours,
-        )
+        if cached is None:
+            features, mids, timestamps_ms = collect_segment(
+                str(row["npz_path"]),
+                contract,
+                step_ns=step_ns,
+                warmup_minutes=warmup_minutes,
+                max_segment_hours=max_segment_hours,
+            )
+            if cache_path is not None and len(mids):
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = cache_path.with_suffix(".tmp.npz")
+                np.savez_compressed(
+                    temporary,
+                    features=features,
+                    mids=mids,
+                    timestamps_ms=timestamps_ms,
+                    metadata=np.asarray(
+                        json.dumps(metadata, sort_keys=True)
+                    ),
+                )
+                temporary.replace(cache_path)
+        else:
+            features, mids, timestamps_ms = cached
         if len(mids):
-            result.append((segment_id, features, mids))
+            result.append((
+                segment_id,
+                features,
+                mids,
+                timestamps_ms,
+            ))
     if not result:
         raise RuntimeError(f"{label} produced no usable samples")
     return result
@@ -431,6 +556,12 @@ def main():
     )
     parser.add_argument("--random-features", type=int, default=128)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="optional validated feature cache directory",
+    )
     parser.add_argument("--out-dir", required=True, type=Path)
     args = parser.parse_args()
 
@@ -452,11 +583,23 @@ def main():
     eval_rows, eval_skipped = _eligible_rows(
         eval_all, args.max_events, args.eval_max_segments
     )
-    fit_segments = _collect_rows(
-        fit_rows, contract, args, "fit"
+    fit_segments = collect_rows(
+        fit_rows,
+        contract,
+        step_ns=args.step_ns,
+        warmup_minutes=args.warmup_minutes,
+        max_segment_hours=args.max_segment_hours,
+        cache_dir=args.cache_dir,
+        label="fit",
     )
-    eval_segments = _collect_rows(
-        eval_rows, contract, args, "eval"
+    eval_segments = collect_rows(
+        eval_rows,
+        contract,
+        step_ns=args.step_ns,
+        warmup_minutes=args.warmup_minutes,
+        max_segment_hours=args.max_segment_hours,
+        cache_dir=args.cache_dir,
+        label="eval",
     )
 
     feature_names = [
@@ -542,6 +685,11 @@ def main():
         "step_ns": args.step_ns,
         "max_segment_hours": args.max_segment_hours,
         "max_events": args.max_events,
+        "cache_dir": (
+            str(args.cache_dir.resolve())
+            if args.cache_dir is not None
+            else None
+        ),
         "model": args.model,
         "ridge": args.ridge,
         "signal_tail_fraction": args.signal_tail_fraction,
