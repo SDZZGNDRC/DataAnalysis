@@ -1,5 +1,10 @@
 # 2026-06 BTC-USDT-SWAP 量化策略研究报告
 
+> **已失效（2026-07-30）**：本报告使用了边界不精确的旧版 NPZ、退化的 RL
+> 订单 ID 逻辑，以及会把 recorder 策略 `equity/fee` 写成 0 的旧 worker。
+> 表格和“RL 正 alpha”结论不得引用。请完成 `exact-segment-v2` 数据重建和
+> `rl-policy-v2` 重训练后，用 `evaluation/final_report.py` 重新生成报告。
+
 生成时间：基于本仓库框架 pipeline（Phase 0–5）。
 
 ## 1. 研究概述

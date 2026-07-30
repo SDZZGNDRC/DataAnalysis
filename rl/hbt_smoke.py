@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from hftbacktest import BacktestAsset, HashMapMarketDepthBacktest, BUY, SELL, GTX, LIMIT
 
 
-def main(npz_path=r"E:\tmp\npz\seg_64_1782206125809.npz", n_steps=500, step_ns=500_000_000, out=r"E:\tmp\rl\smoke.log"):
+def main(npz_path=r"E:\tmp\npz_v2\seg_64_1782206125809.npz", n_steps=500, step_ns=500_000_000, out=r"E:\tmp\rl\v2\smoke.log"):
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     data = np.load(npz_path)["data"]
     asset = (

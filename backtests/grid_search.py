@@ -2,9 +2,9 @@ r"""Phase 2 网格搜索主程序。
 
 用法：
     python backtests/grid_search.py --strategy mean_reversion ^
-        --manifest E:\tmp\npz\manifest.csv --split train ^
+        --manifest E:\tmp\npz_v2\manifest.csv --split train ^
         --grid grids\mean_reversion.json --contract contracts\btc_usdt_swap.json ^
-        --out-dir E:\tmp\results\mr_train --processes 8
+        --out-dir E:\tmp\results_v2\mr_train --processes 8
 
 grid json 格式（参数值列表的笛卡尔积，键须与策略 param_keys 一致）：
     {"ema_alpha":[0.1,0.2], "threshold_ticks":[1.5,2.0], "step_ns":[50000000]}
@@ -28,6 +28,30 @@ if str(PROJECT_ROOT) not in sys.path:
 
 _PY = sys.executable
 _WORKER = Path(__file__).parent / "worker_grid.py"
+
+
+def _expand_grid(grid_raw):
+    """Accept either an explicit tuple list or a legacy Cartesian grid."""
+    if "_combinations" in grid_raw:
+        combinations = grid_raw["_combinations"]
+        if not isinstance(combinations, list) or not all(
+            isinstance(item, dict) for item in combinations
+        ):
+            raise ValueError("_combinations must be a list of parameter objects")
+        # Canonical JSON round-trip removes accidental shared references and
+        # gives deterministic de-duplication.
+        seen = set()
+        result = []
+        for item in combinations:
+            key = json.dumps(item, sort_keys=True, separators=(",", ":"))
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+        return result
+
+    grid = {k: list(dict.fromkeys(v)) for k, v in grid_raw.items()}
+    keys = list(grid.keys())
+    return [dict(zip(keys, values)) for values in product(*[grid[k] for k in keys])]
 
 
 def _make_cmd(t):
@@ -106,18 +130,23 @@ def main():
 
     with open(args.grid) as f:
         grid_raw = json.load(f)
-    # 去重每个参数的取值列表（top-K 网格常含重复值，避免笛卡尔爆炸）
-    grid = {k: list(dict.fromkeys(v)) for k, v in grid_raw.items()}
+    combos = _expand_grid(grid_raw)
     with open(args.contract) as f:
         contract = json.load(f)
     _ = contract  # contract 文件路径直接传给 worker 读取（避免超长 JSON 串）
     m = pd.read_csv(args.manifest)
+    if (
+        "schema_version" not in m
+        or not m["schema_version"].eq("exact-segment-v2").all()
+    ):
+        raise ValueError(
+            "grid_search requires an exact-segment-v2 manifest; "
+            "rebuild NPZ files and run scripts/make_manifest.py"
+        )
     if args.split != "all":
         m = m[m["split"] == args.split]
     segs = m.to_dict("records")
 
-    keys = list(grid.keys())
-    combos = list(product(*[grid[k] for k in keys]))
     if args.max_per_seg > 0 and len(combos) > args.max_per_seg:
         combos = combos[:args.max_per_seg]
     print(f"[grid_search] strategy={args.strategy} split={args.split} "
@@ -125,10 +154,9 @@ def main():
 
     tasks = []
     for seg in segs:
-        for ci, combo in enumerate(combos):
-            params = dict(zip(keys, combo))
+        for ci, params in enumerate(combos):
             out_file = Path(args.out_dir) / f"seg{int(seg['seg_index'])}_{Path(seg['npz_path']).stem}" / f"param_{ci}.json"
-            if out_file.exists():
+            if args.skip_existing and out_file.exists():
                 continue
             tasks.append({
                 "npz": seg["npz_path"],
@@ -142,7 +170,8 @@ def main():
                 "max_seg_hours": str(args.max_seg_hours),
             })
 
-    print(f"[grid_search] 待跑任务: {len(tasks)}（已跳过已存在的）")
+    skipped_note = "（已跳过匹配路径的已有结果）" if args.skip_existing else "（将覆盖已有结果）"
+    print(f"[grid_search] 待跑任务: {len(tasks)}{skipped_note}")
     if not tasks:
         print("无新任务。"); return
 

@@ -20,12 +20,15 @@ def main():
     for f in glob.glob(str(Path(args.results_dir) / "**" / "*.json"), recursive=True):
         with open(f) as fh:
             d = json.load(fh)
-        row = {"strategy": d.get("strategy"), "seg_index": d.get("seg_index"),
+        row = {"result_schema_version": d.get("result_schema_version"),
+               "strategy": d.get("strategy"), "seg_index": d.get("seg_index"),
                "seg_duration_h": d.get("seg_duration_h"), "status": d.get("status")}
         row.update(d.get("params", {}))
         m = d.get("metrics", {}) or {}
         for k in ("equity", "return", "sharpe", "sortino", "max_drawdown",
-                  "num_trades", "fee", "buyhold_return", "final_position"):
+                  "num_trades", "daily_num_trades", "fee", "liquidation_cost",
+                  "buyhold_return", "final_position", "trading_volume",
+                  "trading_value", "backtest_duration_h", "report_notional"):
             row[k] = m.get(k)
         row["error"] = (d.get("error") or {}).get("error", "")
         rows.append(row)

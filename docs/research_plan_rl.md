@@ -2,8 +2,12 @@
 
 > 状态：进行中（2026-07-28 启动）
 > 衔接：基于 Phase 0–5（`docs/research_plan_2026-06.md`）已建成的 npz / grid_search / evaluation 框架
-> 数据：复用 `E:\tmp\npz\` 的 49 个会话段 npz（manifest：train 38 / val 7 / test 4）
+> 数据：使用 `E:\tmp\npz_v2\` 的 49 个 exact-segment-v2 会话段（manifest：train 38 / val 7 / test 4）
 > 中间产物：`E:\tmp\rl\`（ckpt / tb / smoke / results）
+>
+> **v2 修订（2026-07-30）**：旧 NPZ、旧 PPO checkpoint 和旧回测结果已判定
+> 不兼容。新数据必须带 `exact-segment-v2` metadata；新模型必须带
+> `rl-policy-v2` schema，输出放在 `E:\tmp\rl\v2\`，禁止复用 `ckpt2`。
 
 ## 1. 设计概要
 
@@ -13,31 +17,31 @@
 |---|---|
 | 网络结构 | SB3 `MlpPolicy` 默认 [64,64]；CPU 训练 |
 | 动作空间 | **5 离散**：`0=强买(+2 lots), 1=买(+1), 2=hold, 3=卖(-1), 4=强卖(-2)` |
-| 奖励 | `reward = current_equity - previous_equity`（hbt 已含 maker+taker 手续费） |
+| 奖励 | `Δequity - churn_penalty×实际成交量`；终局计入 bid/ask 平仓点差和 taker fee |
 | 观测向量 | ~25 维标准化特征（见下） |
 | 决策频率 | step_ns = 500ms（2Hz；既够稀疏提速训练，又能用 L1 短反应） |
 | 回合 | 1 个训练 seg = 1 episode，可向前 4000–8000 步大窗口 |
 | 训练 | sb3 PPO + SubprocVecEnv ×4；总 ~5M 时间步（1–3 小时 CPU） |
-| 评估 | 复用 Phase 5 框架：val/test 走 grid_search `--max-seg-hours 8`，`LinearAssetRecord.stats().summary()` 给 SR/Sortino/MDD |
+| 评估 | 每次 checkpoint 固定轮播全部 val segments；测试以跨段收益 t 统计量、总收益、费用和胜率报告 |
 
 ### 观测向量（每步归一化，~25 维）
 
 - 长短期 mid 收益（1m / 5m / 15m 标准化，差分规避价格尺度）
 - L1 imbalance = `(bb_qty - ba_qty) / (bb_qty + ba_qty)`
-- L1–L5 bid/ask 累计 qty（按 mid-lot 归一）
+- L1–L5 bid/ask 逐档累计 qty（按 10×下单量归一）
 - 当前 position / max_pos、未实现 PnL 累计（已实现 + 持仓按市价折算 - 费）
-- 距上次成交 ms
-- 波动率（近 1m high-low）
+- 距真实上次成交的时间（1 分钟截断归一）
+- 1m/5m 的波动率与 high-low；历史窗口真实覆盖 15 分钟
 
 ### 动作→订单映射（成本现实口径）
 
 | action | 含义 | 订单 |
 |---|---|---|
-| 0 | 强买 (+2 lots) | 被动买 best_bid_qty×限于 max_pos；不到则加限价单 @ best_bid |
+| 0 | 强买 (+2 lots) | 唯一订单 ID 的 2-lot GTX 限价单 @ best_bid |
 | 1 | 买 (+1 lot) | 限价 @ best_bid 单笔 |
-| 2 | hold | 不新挂；保留单随价格移动节流（与 queue_imbalance_mm 同撤议） |
+| 2 | hold | 撤销活动订单，不增加新的成交意图 |
 | 3 | 卖 (-1 lot) | 限价 @ best_ask 单笔 |
-| 4 | 强卖 (-2 lots) | 被动卖；超出 max_pos 反向平 |
+| 4 | 强卖 (-2 lots) | 唯一订单 ID 的 2-lot GTX 限价单 @ best_ask |
 
 人物画像：让代理在成本约束下学会"无信号就 hold"，避免 Phase 2–4 出现的 churn 主导成本吞噬。
 
@@ -66,13 +70,13 @@
   - CLI `--train-manifest` `--val-manifest` `--total-timesteps` `--out`
   - `SubprocVecEnv([make_env(seg_list) for _ in range(4)])`
   - SB3 `PPO(MlpPolicy, vec_env, n_steps=4096, batch_size=256, n_epochs=10, learning_rate=3e-4, ent_coef=0.01, gamma=0.99, gae_lambda=0.95, verbose=1, tensorboard_log=E:\tmp\rl\tb)`
-  - `EvalCallback(eval_env, n_eval_episodes=1, eval_freq=50_000, best_model_save_path=E:\tmp\rl\ckpt, deterministic=True)` —— 每 50k 时间步在 1 个 val seg 上回放、保存最佳 reward 模型
+  - `EvalCallback` 默认每 500k 聚合训练步轮播全部 val segments；每段使用独立的 1h 评估窗口，避免验证成本反超训练本身；频率与窗口可由 `--eval-freq-timesteps`、`--eval-max-seg-hours` 调整
   - checkpoint 持久化与 resume（通过传 `reset_num_timesteps=False`）
 - **验收**：训练能在 5 分钟内前进 ≥ 1 update 周期；tensorboard log 生成；EvalCallback 写出第一个 ckpt
 
 ### Phase RL3 — 训练运行（~2–4 小时）
 
-- 命令：`python rl/train.py --train-manifest E:\tmp\npz\manifest.csv --train-split train --val-split val --total-timesteps 5_000_000 --out-dir E:\tmp\rl\ckpt`
+- 命令：`python rl/train.py --manifest E:\tmp\npz_v2\manifest.csv --train-split train --val-split val --total-timesteps 5000000 --eval-freq-timesteps 500000 --eval-max-seg-hours 1 --out-dir E:\tmp\rl\v2\ckpt`
 - 中途监控：log 与 `EvalCallback` 的最佳 reward 与 train episode reward
 - 触发停训条件（手动）：reward 多次负值或不动、过度 churn（num_trades 远超其它基线 5× 倍数）→ 调 `ent_coef`、reward shaping、增大 `step_ns`
 - **验收**：训练完成或达 5M 步；`best_reward.zip` 存在；val episode reward 显著优于 random / held 基线（非零 alpha 的弱证据）；若学不到 alpha，至少 churn 不失控
@@ -86,9 +90,9 @@
 - 新增空 grid `grids/rl_policy.json`：`{"model_path": ["E:/tmp/rl/ckpt/best_reward.zip"]}`
 - 跑 `test_split` 只 1 次：
   ```powershell
-  python backtests/grid_search.py --strategy rl_policy --manifest E:\tmp\npz\manifest.csv ^
+  python backtests/grid_search.py --strategy rl_policy --manifest E:\tmp\npz_v2\manifest.csv ^
       --split test --grid grids\rl_policy.json --contract contracts\btc_usdt_swap.json ^
-      --out-dir E:\tmp\results\rl_policy_test --processes 2 --skip-existing --max-seg-hours 8
+      --out-dir E:\tmp\results_v2\rl_policy_test --processes 1 --skip-existing --max-seg-hours 0
   ```
 - aggregate test 结果
 - **验收**：test 4 seg 全部产出；与之前 4 策略口径直接可比

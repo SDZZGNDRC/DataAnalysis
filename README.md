@@ -106,6 +106,35 @@ python okx_mm_demo.py
 python run.py   # 结果写入 backtest_results/
 ```
 
+RL v2 必须从精确切段数据重新训练，旧 checkpoint 会被 schema 校验拒绝：
+
+```powershell
+# 重新生成 exact-segment-v2 NPZ（不要再传未实现的 --max-depth-levels）
+python scripts/convert_segments_npz.py --csv E:\tmp\segments.csv `
+  --pool-root E:\datapool --out-dir E:\tmp\npz_v2 --processes 10 --min-duration 1
+
+# 生成只接受 exact-segment-v2 metadata 的 manifest
+python scripts/make_manifest.py --segments E:\tmp\segments.csv `
+  --npz-dir E:\tmp\npz_v2 --out E:\tmp\npz_v2\manifest.csv
+
+# 训练 rl-policy-v2
+python rl/train.py --manifest E:\tmp\npz_v2\manifest.csv `
+  --train-split train --val-split val --total-timesteps 5000000 `
+  --eval-freq-timesteps 500000 --eval-max-seg-hours 1 `
+  --out-dir E:\tmp\rl\v2\ckpt --tensorboard-log E:\tmp\rl\v2\tb
+
+# 固定模型只运行一次测试参数组合
+python backtests/grid_search.py --strategy rl_policy `
+  --manifest E:\tmp\npz_v2\manifest.csv --split test --grid grids\rl_policy.json `
+  --contract contracts\btc_usdt_swap.json --out-dir E:\tmp\results_v2\rl_policy_test `
+  --processes 1 --max-seg-hours 0
+
+python evaluation/aggregate.py --results-dir E:\tmp\results_v2\rl_policy_test `
+  --out E:\tmp\results_v2\rl_policy_test\aggregate.csv
+python evaluation/final_report.py --manifest E:\tmp\npz_v2\manifest.csv `
+  --results-root E:\tmp\results_v2 --out docs\research_report_2026-06-v2.md
+```
+
 ### 5. 衍生分析
 
 ```powershell

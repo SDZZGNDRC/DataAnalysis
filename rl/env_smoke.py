@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from rl.gym_env import BTCUSDSwapMapsEnv, load_manifest
 
 contract = json.load(open(PROJECT_ROOT / "contracts" / "btc_usdt_swap.json"))
-segs = load_manifest(r"E:\tmp\npz\manifest.csv", split="train")
+segs = load_manifest(r"E:\tmp\npz_v2\manifest.csv", split="train")
 print("train segs:", len(segs))
 
 env = BTCUSDSwapMapsEnv(segs[:4], contract, seed=0, max_seg_hours=2)

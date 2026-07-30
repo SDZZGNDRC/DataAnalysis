@@ -28,4 +28,8 @@ dependencies:
   - nbclient
   - jupyter
   - numba
+  - pip
+  - pip:
+      - gymnasium==1.2.1
+      - stable-baselines3==2.7.0
 prefix: D:\Software\miniconda3\envs\CryptoSpider

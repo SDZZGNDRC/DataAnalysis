@@ -403,7 +403,9 @@ def extract_7z(filename: str, temp_dir: str) -> str:
 def process_books_file(
     json_file: str,
     feed_latency: float,
-    found_snapshot: bool
+    found_snapshot: bool,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
 ) -> Tuple[np.ndarray, bool]:
     """
     处理Books（深度数据）文件。
@@ -419,9 +421,18 @@ def process_books_file(
     with open(json_file, 'rb') as f:
         data = json_loads(f.read())
 
+    # OKX may interleave connection-control messages (for example a service
+    # upgrade ``notice``) with market-data messages in the outer ``data``
+    # array.  Those messages intentionally have no nested ``data`` payload and
+    # must not cause the entire archive to be discarded.
+    payload_items = [
+        item for item in data['data']
+        if isinstance(item, dict) and item.get('data')
+    ]
+
     # 预估事件数量
     estimated_events = 0
-    for item in data['data']:
+    for item in payload_items:
         book_data = item['data'][0]
         estimated_events += len(book_data['bids']) + len(book_data['asks'])
         if item['action'] == 'snapshot':
@@ -431,7 +442,7 @@ def process_books_file(
     buffer = np.empty(estimated_events, event_dtype)
     row_num = 0
 
-    for item in data['data']:
+    for item in payload_items:
         action = item['action']
 
         # 在找到第一个snapshot之前，跳过所有update
@@ -443,6 +454,10 @@ def process_books_file(
 
         book_data = item['data'][0]  # data数组长度总是1
         ts_ms = int(book_data['ts'])
+        if start_ts is not None and ts_ms < start_ts:
+            continue
+        if end_ts is not None and ts_ms > end_ts:
+            continue
         exch_ts = ts_ms * 1_000_000  # 转换为纳秒
 
         # 检查是否有localTs
@@ -546,7 +561,9 @@ def process_books_file(
 
 def process_trades_file(
     json_file: str,
-    feed_latency: float
+    feed_latency: float,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
 ) -> np.ndarray:
     """
     处理Trades（交易数据）文件。
@@ -561,14 +578,23 @@ def process_trades_file(
     with open(json_file, 'rb') as f:
         data = json_loads(f.read())
 
+    payload_items = [
+        item for item in data['data']
+        if isinstance(item, dict) and item.get('data')
+    ]
+
     # 创建缓冲区
-    buffer = np.empty(len(data['data']), event_dtype)
+    buffer = np.empty(len(payload_items), event_dtype)
     row_num = 0
 
-    for item in data['data']:
+    for item in payload_items:
         trade_data = item['data'][0]  # data数组长度总是1
 
         ts_ms = int(trade_data['ts'])
+        if start_ts is not None and ts_ms < start_ts:
+            continue
+        if end_ts is not None and ts_ms > end_ts:
+            continue
         exch_ts = ts_ms * 1_000_000  # 转换为纳秒
 
         # 检查是否有localTs
@@ -730,7 +756,9 @@ def scan_snapshot_worker(files_chunk: List[str]) -> bool:
     return found_snapshot
 
 
-def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> Tuple[np.ndarray, bool]:
+def process_file_worker(
+    file_info_chunk: Tuple[List[str], str, float, bool, Optional[int], Optional[int]]
+) -> Tuple[np.ndarray, bool]:
     """
     多进程worker函数，处理一批文件。
     
@@ -740,12 +768,13 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
     Returns:
         Tuple of (events_array, found_snapshot)
     """
-    files, data_type, feed_latency, found_snapshot = file_info_chunk
+    files, data_type, feed_latency, found_snapshot, start_ts, end_ts = file_info_chunk
     
     if not files:
         return np.empty(0, event_dtype), found_snapshot
     
     all_events = []
+    errors = []
     temp_dir = tempfile.mkdtemp(prefix='okx_worker_')
     
     try:
@@ -760,10 +789,10 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
                 
                 if data_type == 'Books':
                     events, found_snapshot = process_books_file(
-                        json_file, feed_latency, found_snapshot
+                        json_file, feed_latency, found_snapshot, start_ts, end_ts
                     )
                 elif data_type == 'Trades':
-                    events = process_trades_file(json_file, feed_latency)
+                    events = process_trades_file(json_file, feed_latency, start_ts, end_ts)
                 else:
                     continue
                 
@@ -775,17 +804,26 @@ def process_file_worker(file_info_chunk: Tuple[List[str], str, float, bool]) -> 
                     os.remove(json_file)
                     
             except Exception as e:
-                print(f"处理文件 {file_path} 时出错: {e}")
+                errors.append(
+                    f"{file_path}: {type(e).__name__}: {e}"
+                )
                 continue
     
     finally:
         # 清理临时目录
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-    
+
+    if errors:
+        sample = "\n".join(errors[:10])
+        raise RuntimeError(
+            f"{len(errors)} input file(s) failed conversion; refusing a "
+            f"partial market-data segment:\n{sample}"
+        )
+
     if not all_events:
         return np.empty(0, event_dtype), found_snapshot
-    
+
     # 合并所有事件
     if len(all_events) == 1:
         combined_events = all_events[0]
@@ -867,7 +905,9 @@ def convert(
     latency_mu: float = 0.0,
     latency_sigma: float = 1.0,
     use_random_latency: bool = False,
-    random_seed: int = 42
+    random_seed: int = 42,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
 ) -> NDArray:
     """
     转换OKX市场数据文件为HftBacktest兼容格式（支持多进程）。
@@ -885,6 +925,8 @@ def convert(
         latency_sigma: 对数正态分布的标准差参数（用于随机延迟）
         use_random_latency: 是否使用随机延迟而不是固定延迟
         random_seed: 随机数生成器的种子值
+        start_ts: 可选的起始交易所时间戳（毫秒，闭区间）
+        end_ts: 可选的结束交易所时间戳（毫秒，闭区间）
 
     Returns:
         与HftBacktest兼容的转换后数据
@@ -936,7 +978,7 @@ def convert(
         batches = []
         for i in range(0, len(file_list), batch_size):
             batch = file_list[i:i + batch_size]
-            batches.append((batch, data_type, feed_latency, False))
+            batches.append((batch, data_type, feed_latency, False, start_ts, end_ts))
         return batches
 
     # 创建批次
@@ -977,8 +1019,10 @@ def convert(
         print("找到snapshot，开始并行处理...")
         
         updated_batches = []
-        for batch_files, data_type, feed_lat, _ in books_batches:
-            updated_batches.append((batch_files, data_type, feed_lat, True))
+        for batch_files, data_type, feed_lat, _, batch_start_ts, batch_end_ts in books_batches:
+            updated_batches.append((
+                batch_files, data_type, feed_lat, True, batch_start_ts, batch_end_ts
+            ))
         
         if num_processes > 1:
             with Pool(num_processes) as pool:

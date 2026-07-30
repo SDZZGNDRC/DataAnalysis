@@ -1,9 +1,9 @@
 r"""Phase RL2/RL3: train a PPO policy on BTCUSDSwapMapsEnv.
 
 Usage:
-  python rl/train.py --manifest E:\tmp\npz\manifest.csv ^
+  python rl/train.py --manifest E:\tmp\npz_v2\manifest.csv ^
       --train-split train --val-split val --total-timesteps 5000000 ^
-      --out-dir E:\tmp\rl\ckpt --tensorboard-log E:\tmp\rl\tb
+      --out-dir E:\tmp\rl\v2\ckpt --tensorboard-log E:\tmp\rl\v2\tb
 """
 import argparse
 import json
@@ -17,9 +17,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import set_random_seed
 
 from rl.gym_env import BTCUSDSwapMapsEnv, load_manifest, make_env
+from rl.policy_core import POLICY_SCHEMA_VERSION
 
 
 def main():
@@ -43,6 +45,24 @@ def main():
     p.add_argument("--max-position-lots", type=float, default=10.0)
     p.add_argument("--order-qty-lots", type=float, default=1.0)
     p.add_argument("--reward-churn-penalty", type=float, default=0.0)
+    p.add_argument("--warmup-minutes", type=float, default=15.0)
+    p.add_argument(
+        "--eval-freq-timesteps",
+        type=int,
+        default=500_000,
+        help="run a validation sweep after this many aggregate training steps",
+    )
+    p.add_argument(
+        "--eval-max-seg-hours",
+        type=float,
+        default=1.0,
+        help="validation window per segment; all validation segments are still cycled",
+    )
+    p.add_argument(
+        "--checkpoint-freq-timesteps",
+        type=int,
+        default=500_000,
+    )
     p.add_argument("--out-dir", required=True)
     p.add_argument("--tensorboard-log", default=None)
     p.add_argument("--seed", type=int, default=0)
@@ -60,6 +80,11 @@ def main():
         max_position_lots=args.max_position_lots,
         order_qty_lots=args.order_qty_lots,
         reward_churn_penalty=args.reward_churn_penalty,
+        warmup_steps=(
+            int(round(args.warmup_minutes * 60 * 1_000_000_000 / args.step_ns)) + 1
+            if args.warmup_minutes > 0
+            else 0
+        ),
     )
 
     # SubprocVecEnv: each worker reloads npz on reset
@@ -68,7 +93,20 @@ def main():
         for i in range(args.n_envs)
     ])
     # eval env: single env, val split
-    eval_env = BTCUSDSwapMapsEnv(val_paths, contract, seed=args.seed + 999, **env_kwargs)
+    eval_env_kwargs = dict(env_kwargs)
+    eval_env_kwargs["max_seg_hours"] = args.eval_max_seg_hours
+    def make_eval_env():
+        return Monitor(BTCUSDSwapMapsEnv(
+            val_paths,
+            contract,
+            seed=args.seed + 999,
+            selection_mode="cycle",
+            **eval_env_kwargs,
+        ))
+
+    # Match the training VecEnv type and keep Monitor inside the worker so
+    # EvalCallback receives unambiguous episode returns and lengths.
+    eval_env = SubprocVecEnv([make_eval_env])
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     callbacks = [
@@ -76,13 +114,15 @@ def main():
             eval_env,
             best_model_save_path=args.out_dir,
             log_path=args.out_dir,
-            eval_freq=max(args.n_steps, 50_000) // args.n_envs,  # in terms of n_envs steps
-            n_eval_episodes=1,
+            # Callback calls are vector steps, while the CLI is expressed in
+            # aggregate timesteps to stay independent of n_envs.
+            eval_freq=max(args.eval_freq_timesteps // args.n_envs, 1),
+            n_eval_episodes=len(val_paths),
             deterministic=True,
             render=False,
         ),
         CheckpointCallback(
-            save_freq=max(100_000 // args.n_envs, 1),
+            save_freq=max(args.checkpoint_freq_timesteps // args.n_envs, 1),
             save_path=str(Path(args.out_dir) / "checkpoints"),
             name_prefix="ppo_btc",
         ),
@@ -92,6 +132,12 @@ def main():
         print(f"resuming from {args.resume}")
         model = PPO.load(args.resume, env=venv, device="cpu",
                          tensorboard_log=args.tensorboard_log)
+        if getattr(model, "rl_policy_schema_version", None) != POLICY_SCHEMA_VERSION:
+            raise ValueError(
+                f"resume model uses incompatible RL schema: "
+                f"{getattr(model, 'rl_policy_schema_version', None)!r}; "
+                f"expected {POLICY_SCHEMA_VERSION!r}"
+            )
         model.n_steps = args.n_steps
         reset_ts = False
     else:
@@ -111,6 +157,20 @@ def main():
             tensorboard_log=args.tensorboard_log,
         )
         reset_ts = True
+
+    # Stable-Baselines3 persists custom model attributes. EvalCallback's
+    # best_model.zip therefore carries the same compatibility marker.
+    model.rl_policy_schema_version = POLICY_SCHEMA_VERSION
+    model.rl_policy_env_config = {
+        "step_ns": args.step_ns,
+        "max_position_lots": args.max_position_lots,
+        "order_qty_lots": args.order_qty_lots,
+        "warmup_steps": env_kwargs["warmup_steps"],
+        "eval_max_seg_hours": args.eval_max_seg_hours,
+        "report_notional_usdt": contract.get(
+            "report_notional_usdt", contract["initial_balance"]
+        ),
+    }
 
     model.learn(
         total_timesteps=args.total_timesteps,

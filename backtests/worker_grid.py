@@ -19,8 +19,21 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from hftbacktest import BacktestAsset, HashMapMarketDepthBacktest, Recorder
+from hftbacktest.types import BUY_EVENT, DEPTH_SNAPSHOT_EVENT, SELL_EVENT
 from hftbacktest.stats import LinearAssetRecord
+from hftbacktest.stats.metrics import (
+    DailyNumberOfTrades,
+    DailyTradingValue,
+    MaxDrawdown,
+    MaxPositionValue,
+    Ret,
+    ReturnOverMDD,
+    ReturnOverTrade,
+    SR,
+    Sortino,
+)
 from backtests.strategy_registry import get_strategy
+from rl.policy_core import terminal_liquidation_cost
 
 
 def _resolve_mid(best_bid, best_ask):
@@ -31,6 +44,19 @@ def _resolve_mid(best_bid, best_ask):
     if np.isfinite(best_ask):
         return best_ask
     return 0.0
+
+
+def _initial_snapshot_mid(data):
+    event_mask = (data["ev"] & DEPTH_SNAPSHOT_EVENT) != 0
+    if not event_mask.any():
+        return 0.0
+    snapshot_ts = int(data["exch_ts"][event_mask].min())
+    at_snapshot = event_mask & (data["exch_ts"] == snapshot_ts)
+    buys = at_snapshot & ((data["ev"] & BUY_EVENT) != 0) & (data["px"] > 0)
+    sells = at_snapshot & ((data["ev"] & SELL_EVENT) != 0) & (data["px"] > 0)
+    if not buys.any() or not sells.any():
+        return 0.0
+    return float(0.5 * (data["px"][buys].max() + data["px"][sells].min()))
 
 
 def build_asset(data_array, tick_size, lot_size, maker_fee, taker_fee,
@@ -56,23 +82,27 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
     if max_seg_hours and max_seg_hours > 0:
         # Truncate to first max_seg_hours of the segment; snapshot is at the
         # head of the array so book reconstruction is unaffected.
-        first_ts = int(data["exch_ts"][0])
+        first_ts = int(data["exch_ts"].min())
         cutoff = first_ts + int(max_seg_hours * 3600 * 1_000_000_000)
-        idx = int(np.searchsorted(data["exch_ts"], cutoff, side="right"))
-        if 0 < idx < len(data):
-            data = data[:idx]
+        data = data[data["exch_ts"] <= cutoff]
+    if len(data) == 0:
+        return None, {"error": "empty_data"}
+    backtest_duration_h = float(
+        (int(data["exch_ts"].max()) - int(data["exch_ts"].min()))
+        / (3600 * 1_000_000_000)
+    )
     asset = build_asset(data, contract["tick_size"], contract["lot_size"],
                         contract["maker_fee"], contract["taker_fee"])
     hbt = HashMapMarketDepthBacktest([asset])
 
-    # buy&hold baseline: approx mid via first/last positive px in the event stream
-    prices = data["px"]
-    nz = prices[prices > 0]
-    first_px = float(nz[0]) if len(nz) else 0.0
-    last_px = float(nz[-1]) if len(nz) else 0.0
+    first_mid = _initial_snapshot_mid(data)
 
+    report_notional = float(
+        contract.get("report_notional_usdt", contract["initial_balance"])
+    )
     summary_metrics = {}
     final_state = None
+    liquidation_cost = 0.0
     recorder = Recorder(1, 5_000_000) if spec.uses_recorder else None
 
     try:
@@ -82,8 +112,45 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
                 exit_code = spec.func(hbt, recorder.recorder, nt(**params))
             else:
                 exit_code = spec.func(hbt, recorder.recorder, **params)
-            _ = hbt.close()
-            stats = LinearAssetRecord(recorder.get(0)).stats(book_size=10_000)
+            depth = hbt.depth(0)
+            state = hbt.state_values(0)
+            mid = _resolve_mid(depth.best_bid, depth.best_ask)
+            liquidation_cost = terminal_liquidation_cost(
+                state, depth, contract["taker_fee"]
+            )
+            final_state = {
+                "balance": float(state.balance),
+                "position": float(state.position),
+                "fee": float(state.fee),
+                "mid_price": float(mid),
+                "liquidation_cost": float(liquidation_cost),
+                "equity": float(
+                    state.balance + state.position * mid - state.fee - liquidation_cost
+                ),
+                "num_trades": float(state.num_trades),
+                "trading_volume": float(state.trading_volume),
+                "trading_value": float(state.trading_value),
+            }
+            record_data = recorder.get(0).copy()
+            if len(record_data) == 0:
+                _ = hbt.close()
+                return None, {"error": "empty_recorder"}
+            # Make the final record executable: flatten at bid/ask and charge
+            # taker fees.  Treat both spread and fee as terminal execution cost.
+            record_data[-1]["fee"] += liquidation_cost
+            stats = LinearAssetRecord(record_data).stats(
+                metrics=[
+                    SR(trading_days_per_year=365),
+                    Sortino(trading_days_per_year=365),
+                    Ret(book_size=report_notional),
+                    MaxDrawdown(book_size=report_notional),
+                    DailyNumberOfTrades(),
+                    DailyTradingValue(),
+                    ReturnOverMDD(),
+                    ReturnOverTrade(),
+                    MaxPositionValue(),
+                ]
+            )
             df = stats.summary()
             if not df.is_empty():
                 row = df.to_pandas().iloc[0].to_dict()
@@ -91,7 +158,13 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
                     if isinstance(v, (pd.Timestamp, np.datetime64)):
                         v = pd.to_datetime(v).isoformat()
                     summary_metrics[str(k)] = float(v) if isinstance(v, (int, float, np.integer, np.floating)) else v
-            ok = bool(exit_code) if isinstance(exit_code, bool) else True
+            if spec.is_success is not None:
+                ok = bool(spec.is_success(exit_code))
+            elif isinstance(exit_code, (bool, np.bool_)):
+                ok = bool(exit_code)
+            else:
+                ok = exit_code in (1, 2, 15)
+            _ = hbt.close()
         else:
             if spec.params_as_object:
                 nt = _nt("Params", spec.param_keys)
@@ -106,41 +179,78 @@ def run_one(npz_path, strategy_name, params, contract, max_seg_hours=0.0):
                 "position": float(state.position),
                 "fee": float(state.fee),
                 "mid_price": float(mid),
-                "equity": float(state.balance + state.position * mid - state.fee),
+                "liquidation_cost": float(
+                    terminal_liquidation_cost(state, depth, contract["taker_fee"])
+                ),
+                "num_trades": float(state.num_trades),
+                "trading_volume": float(state.trading_volume),
+                "trading_value": float(state.trading_value),
             }
+            final_state["equity"] = float(
+                state.balance
+                + state.position * mid
+                - state.fee
+                - final_state["liquidation_cost"]
+            )
             ok = spec.is_success(exit_code) if spec.is_success else (exit_code == 0)
             try:
                 _ = hbt.close()
             except Exception:
                 pass
     except Exception:
+        try:
+            _ = hbt.close()
+        except Exception:
+            pass
         return None, {"error": "exception", "traceback": traceback.format_exc()[-1500:]}
 
+    if not ok:
+        return None, {
+            "error": "bad_exit_code",
+            "exit_code": bool(exit_code) if isinstance(exit_code, np.bool_) else exit_code,
+        }
+
     if spec.uses_recorder:
+        equity = float(final_state["equity"])
         metrics_out = {
-            "equity": float(summary_metrics.get("Equity", 0.0)),
-            "return": float(summary_metrics.get("Return", 0.0)),
+            "equity": equity,
+            "return": equity / report_notional,
             "sharpe": float(summary_metrics.get("SR", summary_metrics.get("Sharpe", 0.0))),
             "sortino": float(summary_metrics.get("Sortino", 0.0)),
             "max_drawdown": float(summary_metrics.get("MaxDrawdown", 0.0)),
-            "num_trades": float(summary_metrics.get("DailyNumberOfTrades", summary_metrics.get("NumberOfTrades", 0))),
-            "fee": float(summary_metrics.get("Fee", 0.0)),
+            "num_trades": float(final_state["num_trades"]),
+            "daily_num_trades": float(summary_metrics.get("DailyNumberOfTrades", 0.0)),
+            "fee": float(final_state["fee"]),
+            "liquidation_cost": float(final_state["liquidation_cost"]),
+            "final_position": float(final_state["position"]),
+            "trading_volume": float(final_state["trading_volume"]),
+            "trading_value": float(final_state["trading_value"]),
             "_raw": summary_metrics,
         }
     else:
         equity = final_state["equity"] if final_state else 0.0
         metrics_out = {
             "equity": equity,
-            "return": equity,
+            "return": equity / report_notional,
             "sharpe": 0.0,
             "sortino": 0.0,
             "max_drawdown": 0.0,
-            "num_trades": 0,
+            "num_trades": final_state["num_trades"] if final_state else 0.0,
             "fee": final_state["fee"] if final_state else 0.0,
+            "liquidation_cost": final_state["liquidation_cost"] if final_state else 0.0,
             "final_position": float(final_state["position"]) if final_state else 0.0,
+            "trading_volume": final_state["trading_volume"] if final_state else 0.0,
+            "trading_value": final_state["trading_value"] if final_state else 0.0,
             "_raw": (final_state or {}),
         }
-    metrics_out["buyhold_return"] = (last_px / first_px - 1.0) if first_px > 0 else 0.0
+    last_mid = float(final_state["mid_price"]) if final_state else 0.0
+    metrics_out["buyhold_return"] = (
+        last_mid / first_mid - 1.0
+        if first_mid > 0 and last_mid > 0
+        else 0.0
+    )
+    metrics_out["backtest_duration_h"] = backtest_duration_h
+    metrics_out["report_notional"] = report_notional
     return metrics_out, None
 
 
@@ -166,6 +276,7 @@ def main():
     metrics, err = run_one(args.npz, args.strategy, params, contract,
                           max_seg_hours=args.max_seg_hours)
     out = {
+        "result_schema_version": "backtest-result-v2",
         "strategy": args.strategy,
         "seg_index": int(args.seg_index),
         "seg_duration_h": args.seg_duration_h,
@@ -178,6 +289,8 @@ def main():
     with open(args.out, "w") as f:
         json.dump(out, f, default=str, indent=2)
     print(json.dumps({"out": args.out, "status": out["status"]}))
+    if err is not None:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

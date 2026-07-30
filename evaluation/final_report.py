@@ -1,178 +1,272 @@
-r"""Generate the final Phase 5 markdown report aggregating train/val/test results.
+"""Generate a data-driven train/validation/test research report."""
+from __future__ import annotations
 
-Outputs docs/research_report_2026-06.md.
-"""
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+STRATEGIES = (
+    "mean_reversion",
+    "order_flow_imbalance",
+    "rejection",
+    "queue_imbalance_mm",
+    "rl_policy",
+)
 
-from backtests.strategy_registry import get_strategy
+NON_PARAM_COLUMNS = {
+    "result_schema_version", "strategy", "seg_index", "seg_duration_h",
+    "status", "equity", "return",
+    "sharpe", "sortino", "max_drawdown", "num_trades", "daily_num_trades",
+    "fee", "liquidation_cost", "buyhold_return", "final_position",
+    "trading_volume", "trading_value", "backtest_duration_h",
+    "report_notional", "error",
+}
 
 
-def seg_agg(df, has_recorder, notional=10000.0):
-    non_param = {"strategy", "seg_index", "seg_duration_h", "status", "equity", "return",
-                 "sharpe", "sortino", "max_drawdown", "num_trades", "fee", "buyhold_return",
-                 "final_position", "error"}
+def _return_t_stat(returns: np.ndarray) -> float:
+    if len(returns) < 2:
+        return float("nan")
+    std = float(np.std(returns, ddof=1))
+    if std == 0:
+        return float("nan")
+    return float(np.mean(returns) / std * np.sqrt(len(returns)))
+
+
+def aggregate_parameter_tuples(df: pd.DataFrame, fallback_notional: float):
     df = df[df["status"] == "ok"].copy()
-    param_cols = [c for c in df.columns if c not in non_param]
-    df["pk"] = df[param_cols].astype(str).agg("|".join, axis=1) if param_cols else "single"
+    if df.empty:
+        return pd.DataFrame(), []
+    param_cols = [c for c in df.columns if c not in NON_PARAM_COLUMNS]
+    df["parameter_tuple"] = (
+        df[param_cols].astype(str).agg("|".join, axis=1) if param_cols else "single"
+    )
     rows = []
-    for pk, g in df.groupby("pk"):
-        g = g.sort_values("seg_index")
-        n = len(g)
-        eq = g["equity"].astype(float).values
-        if has_recorder and g["sharpe"].notna().any():
-            seg_sharpe = float(g["sharpe"].astype(float).mean())
-            seg_return = float(g["return"].astype(float).mean())
-            mdd = float(g["max_drawdown"].astype(float).max()) if g["max_drawdown"].notna().any() else 0.0
-        else:
-            r = eq / notional
-            seg_sharpe = float(r.mean() / r.std()) if (n > 1 and r.std() > 0) else float("nan")
-            seg_return = float(r.mean()) if n else 0.0
-            cum = np.cumsum(eq); mdd = float((cum - np.maximum.accumulate(cum)).min()) if n else 0.0
-        sum_eq = float(eq.sum()); win = float((eq > 0).mean()) if n else 0.0
-        bh = float(g["buyhold_return"].astype(float).mean()) if n and "buyhold_return" in g else 0.0
-        fee = float(g["fee"].astype(float).sum()) if "fee" in g else 0.0
-        rec = {"pk": pk, "n_segs": n, "seg_sharpe": seg_sharpe, "seg_return": seg_return,
-               "sum_equity": sum_eq, "win_rate": win, "max_mdd": mdd, "mean_buyhold": bh, "fee": fee}
-        for c in param_cols: rec[c] = g[c].iloc[0]
-        rows.append(rec)
-    return pd.DataFrame(rows), param_cols
+    for key, group in df.groupby("parameter_tuple", dropna=False):
+        group = group.sort_values("seg_index")
+        returns = group["return"].astype(float).to_numpy()
+        equity = group["equity"].astype(float).to_numpy()
+        notional = (
+            float(group["report_notional"].dropna().iloc[0])
+            if "report_notional" in group and group["report_notional"].notna().any()
+            else fallback_notional
+        )
+        cumulative = np.cumsum(returns)
+        cross_drawdown = (
+            float(np.max(np.maximum.accumulate(cumulative) - cumulative))
+            if len(cumulative)
+            else 0.0
+        )
+        within_drawdown = (
+            float(group["max_drawdown"].astype(float).max())
+            if group["max_drawdown"].notna().any()
+            else 0.0
+        )
+        record = {
+            "parameter_tuple": key,
+            "n_segs": len(group),
+            "return_t_stat": _return_t_stat(returns),
+            "mean_intrasegment_sr": (
+                float(group["sharpe"].astype(float).mean())
+                if group["sharpe"].notna().any()
+                else float("nan")
+            ),
+            "total_return": float(equity.sum() / notional),
+            "sum_equity": float(equity.sum()),
+            "win_rate": float((equity > 0).mean()),
+            "max_drawdown": max(cross_drawdown, within_drawdown),
+            "fees": float(group["fee"].fillna(0).astype(float).sum()),
+            "liquidation_cost": float(
+                group.get("liquidation_cost", pd.Series(0, index=group.index))
+                .fillna(0).astype(float).sum()
+            ),
+            "num_trades": float(group["num_trades"].fillna(0).astype(float).sum()),
+            "hours": float(
+                group.get("backtest_duration_h", group["seg_duration_h"])
+                .fillna(0).astype(float).sum()
+            ),
+            "mean_buyhold": float(group["buyhold_return"].astype(float).mean()),
+        }
+        for column in param_cols:
+            record[column] = group[column].iloc[0]
+        rows.append(record)
+    result = pd.DataFrame(rows)
+    result = result.sort_values(
+        ["return_t_stat", "total_return"],
+        ascending=[False, False],
+        na_position="last",
+    )
+    return result, param_cols
 
 
-def fmt(df, cols):
+def _table(frame: pd.DataFrame, columns: list[str]) -> str:
+    if frame.empty:
+        return "_无有效结果_"
+    selected = [column for column in columns if column in frame]
     try:
-        return df[cols].to_markdown(index=False)
+        return frame[selected].to_markdown(index=False)
     except Exception:
-        return df[cols].to_string(index=False)
+        return frame[selected].to_string(index=False)
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--manifest", required=True)
-    p.add_argument("--out", required=True)
-    p.add_argument("--notional", type=float, default=10000.0)
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--results-root", default=r"E:\tmp\results")
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--notional", type=float, default=100_000.0)
+    args = parser.parse_args()
+
     manifest = pd.read_csv(args.manifest)
-
-    L = []
-    L.append("# 2026-06 BTC-USDT-SWAP 量化策略研究报告\n")
-    L.append("生成时间：基于本仓库框架 pipeline（Phase 0–5）。\n")
-    L.append("## 1. 研究概述\n")
-    L.append("- **标的**：OKX BTC-USDT-SWAP 永续合约，2026-06 全月原始数据（`E:\\datapool`，只读）。\n")
-    L.append("- **时间划分**：训练 06-01~06-20 / 验证 06-21~06-25 / 测试 06-26~06-30（按 **seqId 会话段** 起始日期归属）。\n")
-    L.append("- **关键发现**：seqId 会话横跨多个日历日，因此采用 **基于会话段的 npz** 而非按日历日切片（详见 `docs/research_plan_2026-06.md`）。\n")
-    L.append("- **合约**：tick=0.1、lot=0.01、maker=0.0002、taker=0.0007、初始资金 n/a（hftbacktest 从 0 起算，equity 即净盈亏 USDT）。\n")
-    L.append("- **耗时预算**：grid_search 在长段（30h+、上亿事件）单次回测数百秒、内存高，训练网格采用 `--max-seg-hours 8` 截断加速；验证段 `--max-seg-hours 4`；测试段 `--max-seg-hours 8`。**报告口径包含 4 个 snapshot 头 seg 的截断样本外结果，已知口径偏差**。\n")
-
-    # 概览表：各 split 的 seg 数
-    splits = {}
-    for sp in ["train", "val", "test"]:
-        n = len(manifest[manifest["split"] == sp])
-        h = manifest[manifest["split"] == sp]["duration_hours"].astype(float).sum()
-        splits[sp] = (n, round(h, 1), round(h / 24, 2))
-    L.append("### 会话段统计\n")
-    L.append("| split | seg 数 | 总时长(h) | 约等于(天) |")
-    L.append("|---|---|---|---|")
-    for sp in ["train", "val", "test"]:
-        n, h, d = splits[sp]
-        L.append(f"| {sp} | {n} | {h} | {d} |")
-    L.append("\n")
-
-    L.append("## 2. 策略基准对比：buy&hold\n")
-    # 用每个 seg 各策略一致：直接从各策略的 test aggregate 里抓 buyhold
-    # buyhold by split per strategy
-    L.append("buy&hold 为各 seg 的首末事件 px 近似 mid 收益。\n")
-
-    L.append("## 3. 各策略训练→验证→测试结果\n")
-    summary_rows = []  # 5 strategies: 3 existing + Phase 4 queue_imbalance_mm + RL PPO policy
-    for strat, has_rec in [("mean_reversion", False),
-                            ("order_flow_imbalance", False),
-                            ("rejection", True),
-                            ("queue_imbalance_mm", True),
-                            ("rl_policy", True)]:
-        spec = get_strategy(strat)
-        idx = ["mean_reversion", "order_flow_imbalance", "rejection", "queue_imbalance_mm", "rl_policy"].index(strat) + 1
-        L.append(f"\n### 3.{idx} `{strat}` (recorder={has_rec})\n")
-        tr_path = Path(f"E:\\tmp\\results\\{strat}_train\\aggregate.csv")
-        va_path = Path(f"E:\\tmp\\results\\{strat}_val\\aggregate.csv")
-        te_path = Path(f"E:\\tmp\\results\\{strat}_test\\aggregate.csv")
-        has_tr = tr_path.exists(); has_va = va_path.exists(); has_te = te_path.exists()
-        if has_tr:
-            a_tr, pc = seg_agg(pd.read_csv(tr_path), has_rec, args.notional)
-        else:
-            a_tr = pd.DataFrame(); pc = []
-        if has_va:
-            a_va, _ = seg_agg(pd.read_csv(va_path), has_rec, args.notional)
-        else:
-            a_va = pd.DataFrame()
-        if has_te:
-            a_te, _ = seg_agg(pd.read_csv(te_path), has_rec, args.notional)
-        else:
-            a_te = pd.DataFrame()
-        # 训练 top 排序
-        rank_key = "seg_sharpe"
-        cols = ["n_segs", "seg_sharpe", "seg_return", "sum_equity", "win_rate", "max_mdd", "mean_buyhold", "fee"] + pc
-
-        if has_tr:
-            a_tr_sorted = a_tr.sort_values([rank_key, "sum_equity"], ascending=[False, False])
-            L.append("#### 训练期 top-K（排序键 seg_sharpe）\n")
-            L.append(fmt(a_tr_sorted.head(5), cols) + "\n")
-        else:
-            L.append("#### 训练期\n段级网格未跑（该策略通过 RL 离线训练而非网格搜索；见 `docs/research_plan_rl.md`）。\n\n")
-        if has_va:
-            L.append("#### 验证期 top-K（训练期 top-5 参数在验证期的聚合）\n")
-            L.append(fmt(a_va.sort_values(rank_key, ascending=False).head(5), cols) + "\n")
-        else:
-            L.append("#### 验证期\nRL 策略的验证在 EvalCallback 自动选 best_model（best reward），未走 grid val。\n\n")
-        if has_te:
-            L.append("#### 测试期（训练 top-1 参数，样本外）\n")
-            L.append(fmt(a_te, cols) + "\n")
-        else:
-            L.append("#### 测试期\n样本外结果缺失。\n\n")
-
-        # 汇总行（test top-1 即 a_te 行；若多行则取 sum_equity 最大的口径，因 test grid 只Give 1 组）
-        te_best = a_te.sort_values("seg_sharpe", ascending=False).iloc[0] if has_te and len(a_te) else None
-        summary_rows.append({
-            "strategy": strat,
-            "test_seg_sharpe": te_best["seg_sharpe"] if te_best is not None else None,
-            "test_seg_return": te_best["seg_return"] if te_best is not None else None,
-            "test_sum_equity": te_best["sum_equity"] if te_best is not None else None,
-            "test_win_rate": te_best["win_rate"] if te_best is not None else None,
-            "test_mean_buyhold": te_best["mean_buyhold"] if te_best is not None else None,
-            "test_max_mdd": te_best["max_mdd"] if te_best is not None else None,
+    results_root = Path(args.results_root)
+    lines = [
+        "# BTC-USDT-SWAP 策略研究报告",
+        "",
+        "本报告完全从本次 aggregate CSV 动态生成；不嵌入历史运行的固定数字。",
+        "",
+        "## 数据与统计口径",
+        "",
+        f"- manifest：`{args.manifest}`",
+        f"- 报告资金：{args.notional:,.0f} USDT（若结果包含 `report_notional`，优先使用结果值）",
+        "- 主评分为跨 segment 收益 t 统计量；段内年化 SR 仅作诊断，不再求平均后称作组合 Sharpe。",
+        "- terminal equity 已计入按 bid/ask 平仓的点差和 taker fee。",
+        "",
+        "### Manifest",
+        "",
+    ]
+    split_rows = []
+    for split in ("train", "val", "test"):
+        subset = manifest[manifest["split"] == split]
+        split_rows.append({
+            "split": split,
+            "segments": len(subset),
+            "manifest_hours": float(subset["duration_hours"].astype(float).sum()),
         })
+    lines.append(_table(pd.DataFrame(split_rows), ["split", "segments", "manifest_hours"]))
 
-    L.append("\n## 4. 五策略样本外（测试段）汇总\n")
-    sdf = pd.DataFrame(summary_rows)
-    L.append(fmt(sdf, ["strategy", "test_seg_sharpe", "test_seg_return", "test_sum_equity",
-                        "test_win_rate", "test_mean_buyhold", "test_max_mdd"]) + "\n")
+    test_summary = []
+    warnings = []
+    for strategy in STRATEGIES:
+        lines.extend(["", f"## `{strategy}`", ""])
+        split_aggregates = {}
+        split_param_cols = {}
+        for split in ("train", "val", "test"):
+            path = results_root / f"{strategy}_{split}" / "aggregate.csv"
+            if not path.exists():
+                lines.extend([f"### {split}", "", "_结果缺失_", ""])
+                continue
+            raw = pd.read_csv(path)
+            required_v2 = {
+                "result_schema_version",
+                "report_notional", "liquidation_cost", "backtest_duration_h",
+                "trading_volume", "trading_value",
+            }
+            missing_v2 = sorted(required_v2 - set(raw.columns))
+            if missing_v2:
+                warnings.append(
+                    f"{strategy}/{split}: 缺少 v2 字段 {missing_v2}，必须重跑。"
+                )
+                lines.extend([
+                    f"### {split}",
+                    "",
+                    f"_旧版结果无效：缺少 {', '.join(missing_v2)}_",
+                    "",
+                ])
+                continue
+            if not raw["result_schema_version"].eq("backtest-result-v2").all():
+                warnings.append(
+                    f"{strategy}/{split}: result schema 不是 backtest-result-v2，必须重跑。"
+                )
+                continue
+            legacy_mask = (
+                raw["return"].fillna(0).ne(0)
+                & raw["equity"].fillna(0).eq(0)
+            )
+            if legacy_mask.any():
+                warnings.append(
+                    f"{strategy}/{split}: {int(legacy_mask.sum())} 行为旧版 "
+                    "`return != 0 && equity == 0`，必须重跑。"
+                )
+            aggregate, param_cols = aggregate_parameter_tuples(raw, args.notional)
+            split_aggregates[split] = aggregate
+            split_param_cols[split] = param_cols
+            columns = [
+                "n_segs", "return_t_stat", "total_return", "sum_equity",
+                "win_rate", "max_drawdown", "fees", "liquidation_cost",
+                "num_trades", "hours", "mean_buyhold",
+            ] + param_cols
+            lines.extend([
+                f"### {split}",
+                "",
+                _table(aggregate.head(5), columns),
+                "",
+            ])
 
-    L.append("\n## 5. 评估结论与方法学\n")
-    L.append("- **五个策略中四个跑输 buy&hold，但 RL PPO 策略 (`rl_policy`) 出现样本外正 SR**：测试段 buy&hold 近似 `mean_buyhold` 列；mean_reversion / OFI / rejection / qimm 的 `test_seg_return` 全为负或 0，而 rl_policy `test_seg_sharpe` 转正（avg≈+1.45），在 BTC 跌段跑赢 buy&hold，是五个中唯一可对比的正向写弱 alpha 信号。\n")
-    L.append("- **根因（分五条）**：\n")
-    L.append("  1. **mean_reversion**：GTX 被动单点差收益难抵 maker 0.02%/taker 0.07% + cancel churn；test SR=-1.55、return -20%。\n")
-    L.append("  2. **order_flow_imbalance**：多数 seg `equity=0`、`balance=0` → 限价 @ ask/bid GTC 在 `risk_adverse_queue` 下基本没被吃单，参数 sweep 无法触发入场（参数与成交模型耦合，非单纯参数问题）。\n")
-    L.append("  3. **rejection**：每段有交易但 SR 略负，分钟级 Rejection 信号在 BTC 较弱 + 高频换手费吞噬；test SR=-5.9。\n")
-    L.append("  4. **queue_imbalance_mm**（Phase 4 新策略）：50ms refresh + 全撤全挂 churn 巨大，DailyNumberOfTrades 数万/天 → taker 命中多、费用急剧吞噬；test SR=-904。改进方向：step_ns 增至 200~500ms、half_spread ≥ 5 ticks、移除全撤改为「价格不变不动单」、做市真实 maker 友好的 maker 价差回报合约（VIP0 maker ≈0.02% 已敷入）。\n")
-    L.append("  5. **rl_policy**（Phase RL0–5 新策略）：PPO 训练 500k 步在 25 维 obs 上学到的 5 离散动作策略。测试段 4 seg 中 seg72 SR=+34.4、seg73 SR=+4.7 为正，seg71/76 因方向错为负；trades/day 114~813 远低于 qimm（数量级），说明步频 500ms + 被动 GTX 限制了 churn。learned policy 在 BTC 跌段净空仓获利（seg76 BTC -1.51% 时策略 -0.73% 仍跑赢 BH）。不足：val 段 reward 抖动剧烈（90~-156），预示策略在体制切换下不稳定；如继续训练（更多 timestep、reward shaping、turnover 罚）可争取正 alpha。\n")
-    L.append("- **样本外口径偏差**：训练/验证段都 ≤8h 截断；测试段 `--max-seg-hours 8` 也截断，每个 seg 实际仅前 8h。完整段测试会进一步暴露交易成本。后续若断点续跑不再受内存约束可对测试段用完整 npz 复跑。\n")
-    L.append("- **方法学胜负**：本仓库框架（交付物见 `docs/research_plan_2026-06.md`）针对本次 1 GB/seg 数据集 ragged state (snapshot 在段首)的「按会话段切 npz」与「Popen 鲁棒并发 + max-seg-hours 截断」是可行的；如要提高完整性可加：(1) 让 OFI 改 IOC/Market playbook; (2) Phase 4 queue_imbalance_mm exploiting L1 imbalance + 库存罚会更有希望。\n")
+        test = split_aggregates.get("test")
+        if test is not None and len(test) == 1:
+            row = test.iloc[0]
+            test_summary.append({
+                "strategy": strategy,
+                "n_segs": row["n_segs"],
+                "return_t_stat": row["return_t_stat"],
+                "total_return": row["total_return"],
+                "sum_equity": row["sum_equity"],
+                "win_rate": row["win_rate"],
+                "max_drawdown": row["max_drawdown"],
+                "fees": row["fees"],
+                "liquidation_cost": row["liquidation_cost"],
+                "num_trades": row["num_trades"],
+            })
+        elif test is not None and len(test) > 1:
+            warnings.append(
+                f"{strategy}/test 包含 {len(test)} 个参数组合；"
+                "报告拒绝在测试集上挑选最优组合。"
+            )
 
-    L.append("\n## 6. 复现命令\n")
-    L.append("```powershell\n# 训练段\npython backtests/grid_search.py --strategy <s> --manifest E:\\tmp\\npz\\manifest.csv --split train --grid grids\\<s>.json --contract contracts\\btc_usdt_swap.json --out-dir E:\\tmp\\results\\<s>_train --processes 8 --max-seg-hours 8\n# 验证段（top-K 由 evaluation/select_params.py 生成的 E:\\tmp\\grids\\<s>_val.json）\npython backtests/grid_search.py --strategy <s> --split val --grid E:\\tmp\\grids\\<s>_val.json ... --max-seg-hours 4\n# 测试段（top-1 由 *_test.json）\npython backtests/grid_search.py --strategy <s> --split test --grid E:\\tmp\\grids\\<s>_test.json ... --max-seg-hours 8\npython evaluation/aggregate.py --results-dir E:\\tmp\\results\\<s>_<sp> --out ...\\aggregate.csv\npython evaluation/final_report.py --manifest E:\\tmp\\npz\\manifest.csv --out docs/research_report_2026-06.md\n```\n")
+    summary = pd.DataFrame(test_summary)
+    lines.extend(["", "## 样本外汇总", ""])
+    lines.append(_table(summary, [
+        "strategy", "n_segs", "return_t_stat", "total_return", "sum_equity",
+        "win_rate", "max_drawdown", "fees", "liquidation_cost", "num_trades",
+    ]))
 
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(L), encoding="utf-8")
-    print(f"report -> {out}")
+    lines.extend(["", "## 自动结论", ""])
+    if summary.empty:
+        lines.append("- 没有满足“测试集仅一个预先选定参数组合”的完整结果。")
+    else:
+        for _, row in summary.iterrows():
+            if row["sum_equity"] > 0:
+                direction = "盈利"
+            elif row["sum_equity"] < 0:
+                direction = "亏损"
+            else:
+                direction = "持平"
+            lines.append(
+                f"- `{row['strategy']}`：{direction} {abs(row['sum_equity']):.2f} USDT，"
+                f"总收益 {row['total_return']:.4%}，胜率 {row['win_rate']:.1%}，"
+                f"跨段收益 t={row['return_t_stat']:.3f}，"
+                f"成交 {row['num_trades']:.0f} 笔。"
+            )
+            if row["num_trades"] == 0:
+                lines.append(
+                    f"- `{row['strategy']}` 在全部测试段零成交；这是退化的空仓策略，"
+                    "不能将零收益解释为有效 alpha。"
+                )
+        lines.append(
+            "- t 统计量和胜率必须结合 segment 数量解释；少量测试段不能单独证明 alpha。"
+        )
+
+    lines.extend(["", "## 完整性警告", ""])
+    if warnings:
+        lines.extend(f"- {warning}" for warning in warnings)
+    else:
+        lines.append("- 未检测到旧版零权益记录或测试集参数挑选。")
+
+    output = Path(args.out)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"report -> {output}")
 
 
 if __name__ == "__main__":
