@@ -29,6 +29,12 @@ from rl.walk_forward_probe import (
 )
 from rl.gym_env import activity_gate_penalty, load_manifest
 from rl.external_features import backward_asof
+from rl.cross_sectional_probe import (
+    build_feature_panel,
+    evaluate_fold,
+    target_weights,
+)
+from rl.multiasset_microstructure_probe import extract_decisions
 from rl.spot_features import (
     SpotFeatureStore,
     augment_segment_with_spot,
@@ -42,6 +48,23 @@ from scripts.build_rl_external_features import (
     deduplicate_last_per_second,
     extract_root_entries,
 )
+from scripts.inventory_okx_universe import (
+    build_swap_universe,
+    parse_archive_name,
+)
+from scripts.build_okx_cross_sectional_daily import summarize_marks
+from scripts.build_okx_cross_sectional_derivatives import (
+    last_before_indices,
+)
+from scripts.build_okx_cross_sectional_index import (
+    select_daily_index_archives,
+)
+from scripts.screen_okx_swap_liquidity import (
+    discover_aligned_daily_ticker_samples,
+    select_prefilter_universe,
+    summarize_daily_samples,
+)
+from scripts.split_okx_inventory import split_channel
 
 
 def test_memory_converter_filters_exact_millisecond_bounds(tmp_path):
@@ -603,3 +626,378 @@ def test_spot_feed_delay_blocks_not_yet_available_update():
     )
     assert delayed[1][0, -1] == 0.0
     assert immediate[1][0, -1] == 1.0
+
+
+def test_universe_inventory_parses_book_depth_and_instrument():
+    parsed = parse_archive_name(
+        "OKX-Books-DOGE-USDT-SWAP-400-1781000000000-"
+        "1781000001000.7z"
+    )
+    assert parsed is not None
+    assert parsed.channel == "Books"
+    assert parsed.instrument == "DOGE-USDT-SWAP"
+    assert parsed.depth == 400
+    assert parse_archive_name("not-an-okx-archive.txt") is None
+
+
+def test_universe_inventory_pairs_swap_with_spot():
+    rows = [
+        {
+            "channel": "Books",
+            "instrument": "DOGE-USDT-SWAP",
+            "directory_days": 60,
+            "archives": 10,
+            "size_bytes": 600,
+        },
+        {
+            "channel": "Trades",
+            "instrument": "DOGE-USDT-SWAP",
+            "directory_days": 59,
+            "archives": 10,
+            "size_bytes": 300,
+        },
+        {
+            "channel": "Books",
+            "instrument": "DOGE-USDT",
+            "directory_days": 58,
+            "archives": 10,
+            "size_bytes": 200,
+        },
+        {
+            "channel": "Trades",
+            "instrument": "DOGE-USDT",
+            "directory_days": 58,
+            "archives": 10,
+            "size_bytes": 100,
+        },
+    ]
+    universe = build_swap_universe(rows, expected_days=60)
+    assert len(universe) == 1
+    assert universe[0]["has_matching_spot"] == 1
+    assert universe[0]["core_coverage_fraction"] == pytest.approx(
+        59 / 60
+    )
+
+
+def test_liquidity_screen_excludes_majors_but_keeps_controls():
+    rows = [
+        {
+            "instrument": "BTC-USDT-SWAP",
+            "core_coverage_fraction": "1",
+            "tickers_days": "61",
+            "markprice_days": "61",
+            "activity_bytes_per_expected_day": "1000",
+        },
+        {
+            "instrument": "DOGE-USDT-SWAP",
+            "core_coverage_fraction": "1",
+            "tickers_days": "61",
+            "markprice_days": "61",
+            "activity_bytes_per_expected_day": "500",
+        },
+    ]
+    selected = select_prefilter_universe(
+        rows,
+        min_core_coverage=0.9,
+        min_ticker_days=55,
+        min_mark_days=55,
+        top_n=1,
+        excluded={"BTC-USDT-SWAP"},
+        controls={"BTC-USDT-SWAP"},
+    )
+    assert selected == ["DOGE-USDT-SWAP", "BTC-USDT-SWAP"]
+
+
+def test_liquidity_screen_uses_quote_volume_and_spread_thresholds():
+    samples = [
+        {
+            "instrument": "DOGE-USDT-SWAP",
+            "spread_bps": spread,
+            "quote_volume_24h": 20_000_000,
+            "staleness_ms": 1000,
+        }
+        for spread in (1.0, 2.0, 3.0)
+    ]
+    summary = summarize_daily_samples(
+        samples,
+        expected_days=3,
+        min_sample_days=3,
+        min_median_quote_volume=10_000_000,
+        max_p90_spread_bps=5.0,
+        max_p90_staleness_ms=60_000,
+    )
+    assert summary[0]["qualifies"] == 1
+    assert summary[0]["median_quote_volume_24h"] == 20_000_000
+
+
+def test_liquidity_screen_uses_common_daily_cutoff(tmp_path):
+    inventory = tmp_path / "inventory.csv"
+    cutoff = int(
+        pd.Timestamp("2026-06-01T15:00:00Z").timestamp() * 1000
+    )
+    pd.DataFrame([
+        {
+            "directory_date": "2026-06-01",
+            "channel": "Tickers",
+            "instrument": "A-USDT-SWAP",
+            "start_ms": cutoff - 3000,
+            "end_ms": cutoff - 1000,
+            "path": "a1",
+        },
+        {
+            "directory_date": "2026-06-01",
+            "channel": "Tickers",
+            "instrument": "A-USDT-SWAP",
+            "start_ms": cutoff - 999,
+            "end_ms": cutoff + 1000,
+            "path": "a2",
+        },
+        {
+            "directory_date": "2026-06-01",
+            "channel": "Tickers",
+            "instrument": "B-USDT-SWAP",
+            "start_ms": cutoff - 2000,
+            "end_ms": cutoff + 500,
+            "path": "b1",
+        },
+    ]).to_csv(inventory, index=False)
+    selected = discover_aligned_daily_ticker_samples(
+        inventory, {"A-USDT-SWAP", "B-USDT-SWAP"}
+    )
+    assert selected[
+        ("A-USDT-SWAP", "2026-06-01")
+    ]["cutoff_ms"] == cutoff
+    assert selected[
+        ("A-USDT-SWAP", "2026-06-01")
+    ]["path"] == "a2"
+
+
+def test_cross_sectional_weights_are_neutral_and_bounded():
+    weights = target_weights(
+        pd.Series(
+            [3.0, 1.0, -1.0, -2.0],
+            index=["A", "B", "C", "D"],
+        ),
+        tail_fraction=0.25,
+    )
+    assert weights.sum() == pytest.approx(0.0)
+    assert weights.abs().sum() == pytest.approx(1.0)
+    assert weights["A"] == 0.5
+    assert weights["D"] == -0.5
+
+
+def test_cross_sectional_inverse_vol_weights_are_capped():
+    predictions = pd.Series(
+        range(12), index=[f"asset_{i}" for i in range(12)]
+    )
+    risk = pd.Series(
+        [0.01] + [0.05] * 11, index=predictions.index
+    )
+    weights = target_weights(
+        predictions,
+        tail_fraction=0.30,
+        risk_scale=risk,
+        max_abs_weight=0.20,
+    )
+    assert weights.sum() == pytest.approx(0.0)
+    assert weights.abs().sum() == pytest.approx(1.0)
+    assert weights.abs().max() <= 0.20 + 1e-12
+
+
+def test_cross_sectional_ticker_features_use_synchronized_panel():
+    dates = pd.date_range("2026-06-01", periods=12, freq="D")
+    instruments = [
+        "A-USDT-SWAP",
+        "B-USDT-SWAP",
+        "C-USDT-SWAP",
+    ]
+    all_instruments = instruments + ["BTC-USDT-SWAP"]
+    mark_rows = []
+    ticker_rows = []
+    derivatives_rows = []
+    for date_position, date_value in enumerate(dates):
+        cutoff = int(date_value.timestamp() * 1000) + 43_200_000
+        for instrument_position, instrument in enumerate(
+            all_instruments
+        ):
+            log_price = (
+                4.0
+                + 0.01 * date_position
+                + 0.002
+                * np.sin(date_position + instrument_position)
+            )
+            mark_rows.append({
+                "directory_date": date_value.date().isoformat(),
+                "instrument": instrument,
+                "mark_px": np.exp(log_price),
+                "sample_cutoff_ms": cutoff,
+                "staleness_ms": 100,
+            })
+            if instrument in instruments:
+                ticker_rows.append({
+                    "directory_date": date_value.date().isoformat(),
+                    "instrument": instrument,
+                    "quote_volume_24h": (
+                        1_000_000
+                        * (1 + date_position + instrument_position)
+                    ),
+                    "spread_bps": 1.0 + instrument_position,
+                    "sample_cutoff_ms": cutoff,
+                    "staleness_ms": 100,
+                })
+                derivatives_rows.append({
+                    "directory_date": date_value.date().isoformat(),
+                    "instrument": instrument,
+                    "sample_cutoff_ms": cutoff,
+                    "oi_staleness_ms": 100,
+                    "oi_ccy": (
+                        10_000
+                        * (1 + date_position + instrument_position)
+                    ),
+                })
+    (
+        features,
+        _,
+        _,
+        _,
+        complete_dates,
+        feature_names,
+    ) = build_feature_panel(
+        pd.DataFrame(mark_rows),
+        instruments,
+        market_instrument="BTC-USDT-SWAP",
+        max_staleness_ms=60_000,
+        ticker_samples=pd.DataFrame(ticker_rows),
+        derivatives_samples=pd.DataFrame(derivatives_rows),
+        max_oi_staleness_ms=60_000,
+        min_cross_section_instruments=3,
+    )
+    assert complete_dates
+    assert "relative_log_volume_change_1d" in feature_names
+    assert "relative_log_spread_level" in feature_names
+    assert "relative_log_oi_change_1d" in feature_names
+    assert not features.isna().any().any()
+
+
+def test_split_inventory_retains_csv_header(tmp_path):
+    source = tmp_path / "inventory.csv"
+    source.write_text(
+        "directory_date,channel,instrument\n"
+        "2026-06-01,Tickers,A-USDT-SWAP\n"
+        "2026-06-01,Books,A-USDT-SWAP\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "Tickers.csv"
+    rows = split_channel(source, output, "Tickers")
+    assert rows == 1
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        "directory_date,channel,instrument",
+        "2026-06-01,Tickers,A-USDT-SWAP",
+    ]
+    targeted = tmp_path / "targeted.csv"
+    targeted_rows = split_channel(
+        source,
+        targeted,
+        "Tickers",
+        instruments={"B-USDT-SWAP"},
+    )
+    assert targeted_rows == 0
+    assert targeted.read_text(encoding="utf-8").splitlines() == [
+        "directory_date,channel,instrument",
+    ]
+
+
+def test_derivatives_panel_uses_backward_asof_only():
+    timestamps = np.asarray([100, 200, 400], dtype=np.int64)
+    cutoffs = np.asarray([50, 100, 350, 500], dtype=np.int64)
+    assert last_before_indices(timestamps, cutoffs).tolist() == [
+        -1,
+        0,
+        1,
+        2,
+    ]
+
+
+def test_microstructure_decisions_do_not_use_late_quotes():
+    timestamps = np.arange(0, 121_000, 1_000, dtype=np.int64)
+    values = {
+        "bidPx": np.linspace(99.0, 100.0, len(timestamps)),
+        "askPx": np.linspace(99.1, 100.1, len(timestamps)),
+        "bidSz": np.full(len(timestamps), 2.0),
+        "askSz": np.full(len(timestamps), 1.0),
+    }
+    rows = extract_decisions(
+        timestamps,
+        values,
+        cutoff_ms=120_000,
+        window_minutes=2,
+        sample_seconds=60,
+        horizons_seconds=(10,),
+        max_quote_staleness_ms=1_000,
+    )
+    assert rows
+    assert all(
+        row["quote_timestamp_ms"] <= row["decision_ms"]
+        for row in rows
+    )
+    assert all(row["book_imbalance"] > 0 for row in rows)
+
+
+def test_index_archive_selection_is_backward_and_asset_local(tmp_path):
+    inventory = tmp_path / "index.csv"
+    inventory.write_text(
+        "directory_date,channel,instrument,depth,start_ms,end_ms,"
+        "size_bytes,path\n"
+        "2026-06-01,IndexTickers,A-USDT,,1780310000000,"
+        "1780316000000,1,a1\n"
+        "2026-06-01,IndexTickers,A-USDT,,1780315100000,"
+        "1780317000000,1,a2\n"
+        "2026-06-01,IndexTickers,A-USDT,,1780315300000,"
+        "1780318000000,1,a3\n",
+        encoding="utf-8",
+    )
+    selected = select_daily_index_archives(
+        inventory, {"A-USDT"}, cutoff_hour_utc=12
+    )
+    row = selected[("A-USDT", "2026-06-01")]
+    assert row["path"] == "a2"
+
+
+def test_cross_sectional_fold_charges_entry_and_terminal_exit():
+    index = pd.MultiIndex.from_product(
+        [["2026-06-01"], ["A", "B"]],
+    )
+    predictions = pd.Series([1.0, -1.0], index=index)
+    targets = pd.Series([10.0, -10.0], index=index)
+    spreads = pd.Series([2.0, 2.0], index=index)
+    metrics, daily, positions = evaluate_fold(
+        predictions,
+        targets,
+        spreads,
+        ["2026-06-01"],
+        tail_fraction=0.25,
+        cost_mode="maker",
+    )
+    assert metrics["gross_pnl_bps"] == pytest.approx(10.0)
+    assert metrics["turnover"] == pytest.approx(2.0)
+    assert metrics["cost_bps"] == pytest.approx(4.0)
+    assert daily[0]["net_pnl_bps"] == pytest.approx(6.0)
+    assert len(positions) == 2
+    assert sum(
+        row["net_contribution_bps"] for row in positions
+    ) == pytest.approx(metrics["net_pnl_bps"])
+
+
+def test_daily_mark_quality_rejects_stale_instrument():
+    summary = summarize_marks(
+        [
+            {
+                "instrument": "DOGE-USDT-SWAP",
+                "staleness_ms": value,
+            }
+            for value in (100, 200, 120_000)
+        ],
+        expected_days=3,
+        max_p90_staleness_ms=60_000,
+    )
+    assert summary[0]["qualifies"] == 0
